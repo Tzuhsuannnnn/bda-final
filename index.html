@@ -1,0 +1,873 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 虛擬店長 - 動態情境導購展示系統</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+    <style>
+      .typing-effect {
+        border-right: 2px solid #3b82f6;
+        animation: blink 0.75s step-end infinite;
+      }
+      @keyframes blink {
+        from,
+        to {
+          border-color: transparent;
+        }
+        50% {
+          border-color: #3b82f6;
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-gray-50 font-sans min-h-screen pb-12">
+    <header
+      class="bg-white/60 backdrop-blur-md text-gray-800 shadow-sm px-6 py-6 mb-8"
+    >
+      <div class="max-w-7xl mx-auto flex justify-between items-center">
+        <div class="flex items-center space-x-4">
+          <div
+            class="w-10 h-10 bg-gradient-to-br from-gray-200 to-white rounded-full flex items-center justify-center text-gray-700 font-semibold"
+          >
+            91
+          </div>
+          <h1 class="text-lg font-semibold tracking-tight">
+            導購示範面板 — 情境化推薦
+          </h1>
+        </div>
+        <span
+          class="text-xs px-3 py-1 rounded-full border border-gray-200 bg-white/40"
+          >示範模式</span
+        >
+      </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <section class="lg:col-span-1 space-y-6">
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+          <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center">
+            <i class="fa-solid fa-user-tag text-blue-500 mr-2"></i> 1.
+            選擇測試會員
+          </h2>
+          <label class="block text-sm font-medium text-gray-600 mb-2"
+            >切換會員檢視不同猶豫標籤：</label
+          >
+          <select
+            id="userSelect"
+            onchange="updateDemoScenario()"
+            class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+          >
+            <option value="user_01">
+              會員 A - 款式猶豫 (高頻切換同類商品)
+            </option>
+            <option value="user_02">會員 B - 規格猶豫 (單頁停留過久)</option>
+            <option value="user_03">會員 C - 價格猶豫 (購物車滯留)</option>
+          </select>
+
+          <div class="mt-4 flex flex-wrap gap-2" id="userTags"></div>
+        </div>
+
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+          <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center">
+            <i class="fa-solid fa-cloud-sun text-emerald-500 mr-2"></i> 2.
+            外部即時資料
+          </h2>
+          <button
+            type="button"
+            onclick="loadExternalContext()"
+            class="mb-3 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+          >
+            <i class="fa-solid fa-rotate-right"></i>
+            重新請求外部 API
+          </button>
+          <div id="externalContextChoices" class="grid grid-cols-1 gap-3">
+            <div
+              class="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3 text-sm text-gray-500"
+            >
+              載入外部資料後，這裡會列出可勾選的天氣、地震與節慶項目。
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+          <h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center">
+            <i class="fa-solid fa-calculator text-indigo-500 mr-2"></i> 3.
+            推薦與定價引擎輸出
+          </h2>
+          <div class="space-y-3 text-sm">
+            <div class="bg-indigo-50 p-3 rounded-xl">
+              <span
+                class="block text-xs font-semibold text-indigo-600 uppercase"
+                >猶豫主商品 (Behavior/SalePage)</span
+              >
+              <span id="mainProduct" class="font-bold text-gray-800"
+                >載入中...</span
+              >
+              <span id="mainPrice" class="block text-xs text-gray-500 mt-0.5"
+                >單價: $--</span
+              >
+            </div>
+            <div class="bg-amber-50 p-3 rounded-xl">
+              <span class="block text-xs font-semibold text-amber-600 uppercase"
+                >FP-Growth / Two-Tower 推薦互補品</span
+              >
+              <span id="recProduct" class="font-bold text-gray-800"
+                >載入中...</span
+              >
+              <span id="recPrice" class="block text-xs text-gray-500 mt-0.5"
+                >單價: $--</span
+              >
+            </div>
+            <div
+              class="border-t border-dashed border-gray-200 pt-3 flex justify-between items-center px-1"
+            >
+              <span class="font-medium text-gray-600">組合原始總價:</span>
+              <span
+                id="originalPrice"
+                class="line-through text-gray-400 font-semibold"
+                >$--</span
+              >
+            </div>
+            <div
+              class="flex justify-between items-center px-1 bg-rose-50 p-2 rounded-lg"
+            >
+              <span class="font-bold text-rose-600"
+                >促銷組合價 (定價引擎):</span
+              >
+              <span id="bundlePrice" class="text-xl font-black text-rose-600"
+                >$--</span
+              >
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="lg:col-span-2 space-y-6">
+        <div
+          class="bg-white/60 backdrop-blur-md text-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 relative"
+        >
+          <h3 class="text-gray-700 font-medium mb-3 text-sm flex items-center">
+            <i class="fa-solid fa-list mr-2"></i> LLM 結構化參數
+          </h3>
+          <div
+            class="p-2 rounded overflow-x-auto space-y-2 leading-relaxed text-gray-600 text-sm"
+          >
+            <p>
+              <span class="text-gray-500">角色</span>:
+              智慧店長，語氣溫暖、專業、貼近日常溝通。
+            </p>
+            <p>
+              <span class="text-gray-500">會員標籤</span>: 性別:
+              <span id="promptGender" class="text-gray-800"></span> | 意圖:
+              <span
+                id="promptIntent"
+                class="text-rose-500 font-semibold"
+              ></span>
+            </p>
+            <p>
+              <span class="text-gray-500">CWA 現在天氣</span>:
+              <span id="cwaWeather" class="text-gray-800"></span>
+            </p>
+            <p>
+              <span class="text-gray-500">現在天氣</span>:
+              <span id="promptWeather" class="text-gray-800"></span>
+            </p>
+            <p>
+              <span class="text-gray-500">節慶 / 活動（prompt）</span>:
+              <span id="promptFestival" class="text-gray-800"></span>
+            </p>
+            <p>
+              <span class="text-gray-500">重大自然災害 / 警報</span>:
+              <span id="cwaDisaster" class="text-gray-800"></span>
+            </p>
+            <p>
+              <span class="text-gray-500">節慶 / 活動</span>:
+              <span id="cwaHoliday" class="text-gray-800"></span>
+            </p>
+            <p>
+              <span class="text-gray-500">納入 prompt</span>:
+              <span id="promptSelectedSummary" class="text-gray-800"></span>
+            </p>
+            <p>
+              <span class="text-gray-500">商品組合</span>: 主商品(<span
+                id="promptProd1"
+                class="text-gray-800"
+              ></span
+              >) + 互補品(<span id="promptProd2" class="text-gray-800"></span
+              >)，原價
+              <span id="promptOrigPrice" class="text-gray-800"></span
+              >，特惠組合價
+              <span
+                id="promptComboPrice"
+                class="text-rose-500 font-semibold"
+              ></span>
+              。
+            </p>
+            <p>
+              <span class="text-gray-500">任務</span>: 產出 100
+              字內情境化推播文案，重點在「幫助使用者做決定」，語氣真誠自然，避免生硬宣告式用語。
+            </p>
+          </div>
+        </div>
+
+        <div
+          class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center"
+        >
+          <div class="w-full text-left mb-4">
+            <h2
+              class="text-lg font-semibold text-gray-800 flex items-center justify-between"
+            >
+              <span
+                ><i class="fa-solid fa-bell text-gray-600 mr-2"></i> 4.
+                文案推薦（示範）</span
+              >
+              <span
+                id="loadingStatus"
+                class="text-xs text-green-600 font-normal hidden flex items-center"
+              >
+                <i class="fa-solid fa-circle-notch animate-spin mr-1"></i>
+                生成中...
+              </span>
+            </h2>
+            <p class="text-xs text-gray-500 mt-1">
+              下方模擬消費者手機畫面所收到的即時個人化 Contextual Push
+              Notification。
+            </p>
+            <div
+              class="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600 space-y-1"
+            >
+              <div class="flex items-center justify-between">
+                <span class="font-medium text-gray-700">API 狀態</span>
+                <span id="apiStatus" class="text-emerald-600 font-semibold"
+                  >尚未請求</span
+                >
+              </div>
+              <div id="apiStatusDetail" class="leading-relaxed">
+                進入頁面後會自動請求外部 API，這裡會顯示後端回傳結果。
+              </div>
+              <div id="apiStatusTime" class="text-[11px] text-gray-500"></div>
+            </div>
+          </div>
+
+          <div
+            class="w-full max-w-sm bg-gradient-to-b from-white/60 to-white/30 p-4 rounded-[34px] shadow-2xl border border-gray-100 aspect-[9/16] relative flex flex-col justify-start overflow-hidden"
+          >
+            <div class="absolute inset-x-0 top-2 flex justify-center">
+              <div class="w-24 h-4 bg-white/60 rounded-b-xl"></div>
+            </div>
+
+            <div
+              class="flex justify-between items-center px-4 pt-6 pb-2 text-[11px] text-gray-600 z-10 font-sans"
+            >
+              <span id="mockTime">12:00</span>
+              <div class="flex space-x-2 items-center text-gray-500">
+                <i class="fa-solid fa-signal"></i>
+                <i class="fa-solid fa-wifi"></i>
+              </div>
+            </div>
+
+            <div
+              class="mt-4 bg-white/70 backdrop-blur-sm mx-3 p-4 rounded-2xl shadow-sm border border-white/30"
+            >
+              <div class="flex justify-between items-center mb-2">
+                <div class="flex items-center space-x-2">
+                  <div
+                    class="w-6 h-6 bg-gray-100 rounded-md flex items-center justify-center text-[11px] text-gray-700 font-medium"
+                  >
+                    91
+                  </div>
+                  <span class="text-sm font-medium text-gray-800">商城</span>
+                </div>
+                <span class="text-[11px] text-gray-500">現在</span>
+              </div>
+
+              <h4
+                id="pushTitle"
+                class="text-sm font-semibold text-gray-900 mb-1"
+              >
+                專屬推薦
+              </h4>
+              <p
+                id="pushBody"
+                class="text-sm text-gray-700 leading-relaxed min-h-[76px] typing-effect"
+              >
+                正在生成中...
+              </p>
+
+              <div
+                class="mt-3 bg-black text-white rounded-lg p-2 flex justify-between items-center text-[13px] font-semibold shadow-sm cursor-pointer transition-opacity"
+              >
+                <span id="pushBadge">限定組合價 $---- · 查看</span>
+                <i class="fa-solid fa-chevron-right text-[11px]"></i>
+              </div>
+            </div>
+
+            <div
+              class="w-20 h-1 bg-gray-200 absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full"
+            ></div>
+          </div>
+
+          <button
+            onclick="generateAIOutput()"
+            class="mt-4 px-5 py-2 bg-gray-800 hover:bg-gray-900 text-white text-xs font-semibold rounded-xl transition shadow flex items-center space-x-1"
+          >
+            <i class="fa-solid fa-arrows-rotate"></i>
+            <span>生成文案</span>
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="max-w-7xl mx-auto px-4 mt-8">
+      <div
+        class="bg-gray-100 p-4 rounded-xl border border-gray-200 text-xs text-gray-500 text-center"
+      >
+        <strong>系統連動邏輯架構說明：</strong>
+        意圖標籤識別 (陳羿茹、何安婕) ➔ 互補與個人化商品推薦 (Zi Muu、溫楫驊) ➔
+        定價與 LLM 動態文案前端連動展示 (魏慈萱) ➔ 成效與路徑驗證 (趙偉翔)
+      </div>
+    </footer>
+
+    <script>
+      const API_BASES =
+        window.location.protocol === "file:"
+          ? [
+              "http://localhost:3001",
+              "http://localhost:3000",
+              "http://localhost:3002",
+              "http://localhost:3003",
+              "http://localhost:3004",
+            ]
+          : [window.location.origin];
+
+      async function postJsonWithFallback(path, payload) {
+        let lastError = null;
+
+        for (const base of API_BASES) {
+          try {
+            const response = await fetch(`${base}${path}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+
+            if (response.ok) {
+              return { response, base };
+            }
+
+            lastError = new Error(`HTTP ${response.status} from ${base}`);
+          } catch (error) {
+            lastError = error;
+          }
+        }
+
+        throw lastError || new Error("No API base available");
+      }
+
+      let latestExternalContext = null;
+      let latestExternalChoices = [];
+      let typingTimer = null;
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function formatTaipeiMonthDay(dateString) {
+        if (!dateString) return "";
+        const parsedDate = new Date(`${dateString}T00:00:00+08:00`);
+        if (Number.isNaN(parsedDate.getTime())) return dateString;
+        return new Intl.DateTimeFormat("zh-TW", {
+          timeZone: "Asia/Taipei",
+          month: "numeric",
+          day: "numeric",
+        }).format(parsedDate);
+      }
+
+      function buildExternalChoices(contextData) {
+        const choices = [];
+        const weather = contextData?.weather;
+        const disaster = contextData?.disaster;
+        const holiday = contextData?.holiday;
+
+        // 1. 現在天氣（不顯示溫度）
+        if (weather && weather.weatherText) {
+          choices.push({
+            key: "weatherText",
+            label: "現在天氣",
+            value: weather.weatherText,
+            detail: weather.stationName
+              ? `${weather.stationName}｜${weather.countyName}`
+              : weather.countyName || "",
+          });
+        }
+
+        // 2. 地震項目
+        if (disaster?.earthquake) {
+          const earthquake = disaster.earthquake;
+          choices.push({
+            key: "earthquake",
+            label: "地震觀測",
+            value: `規模 ${earthquake.magnitude} (震央: ${earthquake.epicenter})`,
+            detail: `發生時間: ${earthquake.originTime}`,
+          });
+        }
+
+        // 3. 🛠️ 動態產生 W-C0033-003/004/005 的 Checkbox
+        if (disaster?.alerts && disaster.alerts.length > 0) {
+          disaster.alerts.forEach((alert, index) => {
+            choices.push({
+              key: `climateAlert:${index}`, // 使用索引作爲與後端溝通的金鑰
+              label: `氣候警戒(${alert.alertType})`,
+              value: `${alert.county} ${alert.description}`,
+              detail: `有效期限: ${alert.startTime.slice(5, 16)} 至 ${alert.endTime.slice(5, 16)}`,
+            });
+          });
+        }
+
+        // 4. 節慶項目
+        (holiday?.upcoming || []).forEach((item) => {
+          choices.push({
+            key: `holiday:${item.dateString}`,
+            label: `${formatTaipeiMonthDay(item.dateString)} ${item.name}`,
+            value: `距今天 ${item.diffDays} 天`,
+          });
+        });
+
+        return choices;
+      }
+
+      function renderExternalContextChoices() {
+        const container = document.getElementById("externalContextChoices");
+        if (!container) return;
+
+        if (!latestExternalChoices.length) {
+          container.innerHTML = `
+            <div class="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3 text-sm text-gray-500">
+              目前沒有可選的外部資料。
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = latestExternalChoices
+          .map(
+            (choice, index) => `
+              <label class="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  data-context-key="${escapeHtml(choice.key)}"
+                  data-context-label="${escapeHtml(choice.label)}"
+                  checked
+                  onchange="syncPromptPreview()"
+                  class="mt-1 h-4 w-4 accent-gray-800"
+                />
+                <div class="flex-1">
+                  <div class="text-sm font-medium text-gray-800">${escapeHtml(choice.label)}</div>
+                  <div class="text-sm text-gray-600 mt-0.5">${escapeHtml(choice.value)}</div>
+                  ${choice.detail ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(choice.detail)}</div>` : ""}
+                </div>
+              </label>
+            `,
+          )
+          .join("");
+      }
+
+      function collectContextSelection() {
+        const checkboxes = document.querySelectorAll(
+          "#externalContextChoices input[type='checkbox']",
+        );
+        if (!checkboxes.length) {
+          return { selectedContextKeys: [], selectedContextLabels: [] };
+        }
+
+        const selectedCheckboxes = Array.from(checkboxes).filter(
+          (input) => input.checked,
+        );
+
+        return {
+          selectedContextKeys: selectedCheckboxes.map(
+            (input) => input.dataset.contextKey,
+          ),
+          selectedContextLabels: selectedCheckboxes.map(
+            (input) => input.dataset.contextLabel || input.dataset.contextKey,
+          ),
+        };
+      }
+
+      function getSelectedContextLabels() {
+        return collectContextSelection().selectedContextLabels || [];
+      }
+
+      function setTextContent(id, value) {
+        const element = document.getElementById(id);
+        if (!element) return;
+        element.innerText = value ?? "";
+      }
+
+      const mockDatabase = {
+        user_01: {
+          name: "陳小姐",
+          gender: "女",
+          intentLabel: "款式猶豫",
+          mainProduct:
+            "熱療撫紋導入儀(音波震動版)+一夜透亮活膚精露(10ML 隨身瓶)",
+          mainPrice: 2480,
+          recProduct: "山茶花黃金護唇膏",
+          recPrice: 880,
+          discountFormula: (p1, p2) => Math.round((p1 + p2) * 0.85),
+        },
+        user_02: {
+          name: "林先生",
+          gender: "男",
+          intentLabel: "規格猶豫",
+          mainProduct:
+            "熱療撫紋導入儀(音波震動版)+一夜透亮活膚精露(10ML 隨身瓶)",
+          mainPrice: 12000,
+          recProduct: "山茶花黃金護唇膏",
+          recPrice: 1500,
+          discountFormula: (p1, p2) => Math.round(p1 + p2 * 0.3),
+        },
+        user_03: {
+          name: "張小姐",
+          gender: "女",
+          intentLabel: "價格猶豫",
+          mainProduct:
+            "熱療撫紋導入儀(音波震動版)+一夜透亮活膚精露(10ML 隨身瓶)",
+          mainPrice: 3950,
+          recProduct: "山茶花黃金護唇膏",
+          recPrice: 2100,
+          discountFormula: (p1, p2) => Math.round(p1 + p2 - 1000),
+        },
+      };
+
+      function getLLMGeneratedText(user, weather, festival) {
+        const name = user.name;
+        const p1 = user.mainProduct;
+        const p2 = user.recProduct;
+
+        if (user.intentLabel === "款式猶豫") {
+          if (weather.includes("下雨低溫")) {
+            return `【虛擬店長貼心建議】${name}，看著窗外變天起風，是否正少了一件百搭的外套？你關注的《${p1}》具備極佳防風與修飾效果。限時端午連假特惠，主動為您搭配《${p2}》，給您滿滿的溫暖，組合現省15%，穿出專屬妳的優雅！`;
+          } else if (weather.includes("烈日高溫")) {
+            return `【美型輕防曬】${name}，夏天高紫外線也擋不住妳的優雅！這款《${p1}》材質透氣抗UV，搭配防曬必備《${p2}》，精選組合價即刻享85折。別再猶豫款式，這樣穿最對味！`;
+          } else {
+            return `【風格穿搭提案】${name}，還在猶豫外套款式嗎？《${p1}》是本季百搭首選，搭配互補熱銷款《${p2}》能多層次展現個性。今天限定成套享85折優惠，由AI店長為您嚴選的命定組合！`;
+          }
+        } else if (user.intentLabel === "規格猶豫") {
+          let contextIntro = festival.includes("端午節")
+            ? "連假露營計畫準備出發！"
+            : "下一個假期，奔向大自然吧！";
+          if (weather.includes("下雨")) {
+            return `【專業戶外指南】${name}，${contextIntro}擔心暴雨規格嗎？您研究許久的《${p1}》擁有頂級防水係數與黑膠防曬，性能經得起考驗！現在下單，即可以3折加購專業級《${p2}》，雨天露營也能溫馨明亮，規格一次到位！`;
+          } else {
+            return `【山系探險首選】${name}，${contextIntro}打造完美露營，裝備規格馬虎不得。您關注的《${p1}》空間與抗風性極佳，現在升級豪華套組，只要加價30%就內含大電量《${p2}》，不用再猶豫規格，出發吧！`;
+          }
+        } else if (user.intentLabel === "價格猶豫") {
+          let timeText = festival.includes("倒數")
+            ? "倒數最後特惠階段"
+            : "今天限定驚喜";
+          return `【購物車降價通知】${name}，貼心的AI店長幫您極力爭取！置留購物車的夢幻逸品《${p1}》，搭配保養大推的《${p2}》，${timeText}驚喜現折 $1000 元！擊破價格底線，僅此一檔，按此立即一鍵結帳清空購物車！`;
+        }
+        return `【91APP 智慧生活】哈囉 ${name}，您關注的商品有最新動態囉！搭配熱銷互補品享限定優惠價，歡迎回店參觀。`;
+      }
+
+      function updateDemoScenario(shouldLoadExternal = true) {
+        const userSelectEl = document.getElementById("userSelect");
+        if (!userSelectEl) return;
+
+        const userKey = userSelectEl.value;
+        const userData = mockDatabase[userKey];
+        if (!userData) return;
+
+        setTextContent("mainProduct", userData.mainProduct);
+        setTextContent(
+          "mainPrice",
+          `單價: $${userData.mainPrice.toLocaleString()}`,
+        );
+        setTextContent("recProduct", userData.recProduct);
+        setTextContent(
+          "recPrice",
+          `單價: $${userData.recPrice.toLocaleString()}`,
+        );
+
+        const origTotal = userData.mainPrice + userData.recPrice;
+        const finalBundle = userData.discountFormula(
+          userData.mainPrice,
+          userData.recPrice,
+        );
+
+        setTextContent("originalPrice", `$${origTotal.toLocaleString()}`);
+        setTextContent("bundlePrice", `$${finalBundle.toLocaleString()}`);
+
+        const tagsContainer = document.getElementById("userTags");
+        if (tagsContainer) {
+          let badgeColor = "bg-blue-100 text-blue-800";
+          if (userData.intentLabel === "規格猶豫")
+            badgeColor = "bg-amber-100 text-amber-800";
+          if (userData.intentLabel === "價格猶豫")
+            badgeColor = "bg-rose-100 text-rose-800";
+
+          tagsContainer.innerHTML = `
+            <span class="px-2.5 py-1 rounded-md text-xs font-bold ${badgeColor}">
+                <i class="fa-solid fa-tag mr-1"></i> ${userData.intentLabel}
+            </span>
+            
+          `;
+        }
+
+        syncPromptPreview();
+        if (shouldLoadExternal) {
+          loadExternalContext();
+        }
+      }
+
+      function syncPromptPreview() {
+        const userSelectEl = document.getElementById("userSelect");
+        if (!userSelectEl) return;
+
+        const userKey = userSelectEl.value;
+        const userData = mockDatabase[userKey];
+        if (!userData) return;
+
+        const weatherSummary =
+          latestExternalContext?.summary?.weatherText || "--";
+        const holidaySummary =
+          latestExternalContext?.summary?.holidayText || "30 天內無節慶";
+
+        const origTotal = userData.mainPrice + userData.recPrice;
+        const finalBundle = userData.discountFormula(
+          userData.mainPrice,
+          userData.recPrice,
+        );
+
+        setTextContent("promptGender", userData.gender);
+        setTextContent("promptIntent", userData.intentLabel);
+        setTextContent("promptWeather", weatherSummary);
+        setTextContent("promptFestival", holidaySummary);
+        setTextContent("promptProd1", userData.mainProduct);
+        setTextContent("promptProd2", userData.recProduct);
+        setTextContent("promptOrigPrice", `$${origTotal}`);
+        setTextContent("promptComboPrice", `$${finalBundle}`);
+
+        const summaryEl = document.getElementById("promptSelectedSummary");
+        if (summaryEl) {
+          summaryEl.innerText =
+            getSelectedContextLabels().join("、") || "未勾選任何外部資訊";
+        }
+      }
+
+      // 🛠️ 嚴格模式：核心 Debug 區塊之一
+      async function loadExternalContext() {
+        const userSelectEl = document.getElementById("userSelect");
+        if (!userSelectEl) return;
+
+        const userKey = userSelectEl.value;
+        const userData = mockDatabase[userKey];
+        if (!userData) return;
+
+        const apiStatusEl = document.getElementById("apiStatus");
+        const apiStatusDetailEl = document.getElementById("apiStatusDetail");
+        const apiStatusTimeEl = document.getElementById("apiStatusTime");
+
+        if (apiStatusEl) {
+          apiStatusEl.innerText = "載入外部資料";
+          apiStatusEl.className = "text-gray-500 font-semibold";
+        }
+        if (apiStatusDetailEl)
+          apiStatusDetailEl.innerText = "正在抓取 CWA 天氣資料...";
+
+        try {
+          const { response: resp, base } = await postJsonWithFallback(
+            "/api/context",
+            {
+              userData: {
+                name: userData.name,
+                cityName: "臺北市",
+                intentLabel: userData.intentLabel,
+              },
+            },
+          );
+
+          const data = await resp.json();
+
+          // 🔥 在開發工具 Console 印出 API 原始回傳值，供你抓蟲
+          console.log("=== [/api/context] 後端回傳原始資料 ===", data);
+
+          latestExternalContext = data;
+          latestExternalChoices = buildExternalChoices(data?.context);
+          renderExternalContextChoices();
+
+          const cwaHoliday = data?.context?.holiday;
+          const cwaDisaster = data?.context?.disaster;
+          const weatherSummary = data?.summary?.weatherText || "--";
+          const holidaySummary = data?.summary?.holidayText || "30 天內無節慶";
+          const disasterSummary =
+            data?.summary?.disasterText || "目前無明顯地震或颱風警報";
+
+          const cwaWeatherEl = document.getElementById("cwaWeather");
+          if (cwaWeatherEl)
+            cwaWeatherEl.innerText =
+              data?.context?.weather?.weatherText || "[未抓到 API 天氣描述]";
+
+          const cwaDisasterEl = document.getElementById("cwaDisaster");
+          if (cwaDisasterEl) cwaDisasterEl.innerText = disasterSummary;
+
+          const cwaHolidayEl = document.getElementById("cwaHoliday");
+          if (cwaHolidayEl)
+            cwaHolidayEl.innerText = holidaySummary.replaceAll("｜", "\n");
+
+          setTextContent("promptWeather", weatherSummary);
+          setTextContent("promptFestival", holidaySummary);
+
+          if (apiStatusEl) {
+            apiStatusEl.innerText = "外部資料已載入";
+            apiStatusEl.className = "text-emerald-600 font-semibold";
+          }
+          if (apiStatusDetailEl) {
+            apiStatusDetailEl.innerText = `API 請求成功。請按下 F12 查看 Console 的資料欄位。`;
+          }
+          if (apiStatusTimeEl)
+            apiStatusTimeEl.innerText = `更新時間：${new Date().toLocaleTimeString()}`;
+
+          syncPromptPreview();
+        } catch (err) {
+          if (apiStatusEl) {
+            apiStatusEl.innerText = "外部資料載入失敗";
+            apiStatusEl.className = "text-rose-600 font-semibold";
+          }
+          if (apiStatusDetailEl)
+            apiStatusDetailEl.innerText = `無法抓到外部資料：${err.message}`;
+        }
+      }
+
+      // 🛠️ 嚴格模式：核心 Debug 區塊之二
+      async function generateAIOutput() {
+        const userSelectEl = document.getElementById("userSelect");
+        if (!userSelectEl) return;
+
+        const userKey = userSelectEl.value;
+        const userData = mockDatabase[userKey];
+        if (!userData) return;
+
+        const weather = latestExternalContext?.summary?.weatherText || "";
+        const festival = latestExternalContext?.summary?.holidayText || "";
+        const selection = collectContextSelection();
+
+        const origTotal = userData.mainPrice + userData.recPrice;
+        const finalBundle = userData.discountFormula(
+          userData.mainPrice,
+          userData.recPrice,
+        );
+
+        setTextContent("promptGender", userData.gender);
+        setTextContent("promptIntent", userData.intentLabel);
+        setTextContent("promptWeather", weather);
+        setTextContent("promptFestival", festival);
+        setTextContent("promptProd1", userData.mainProduct);
+        setTextContent("promptProd2", userData.recProduct);
+        setTextContent("promptOrigPrice", `$${origTotal}`);
+        setTextContent("promptComboPrice", `$${finalBundle}`);
+
+        const loadingStatus = document.getElementById("loadingStatus");
+        const pushBody = document.getElementById("pushBody");
+        if (loadingStatus) loadingStatus.classList.remove("hidden");
+        if (pushBody) {
+          pushBody.innerText = "系統正在生成個人化推薦文案...";
+          pushBody.classList.remove("typing-effect");
+        }
+
+        await new Promise((r) => setTimeout(r, 300));
+
+        let targetText = "";
+        try {
+          const payload = {
+            userKey,
+            weather,
+            festival,
+            selection,
+            contextData: latestExternalContext?.context || null,
+            userData: {
+              name: userData.name,
+              cityName: "臺北市",
+              mainProduct: userData.mainProduct,
+              mainPrice: userData.mainPrice,
+              recProduct: userData.recProduct,
+              recPrice: userData.recPrice,
+              intentLabel: userData.intentLabel,
+            },
+            selectedContextKeys: selection.selectedContextKeys,
+          };
+
+          const { response: resp, base } = await postJsonWithFallback(
+            "/api/generate",
+            payload,
+          );
+
+          if (resp.ok) {
+            const data = await resp.json();
+
+            // 🔥 在開發工具 Console 印出此處 API 的原始回傳值
+            console.log("=== [/api/generate] 後端回傳原始資料 ===", data);
+
+            targetText = data.text || "";
+
+            const cwaHoliday = data?.context?.holiday;
+            const cwaDisaster = data?.context?.disaster;
+          }
+        } catch (err) {
+          console.warn("Error calling backend", err);
+        }
+
+        if (!targetText)
+          targetText = getLLMGeneratedText(userData, weather, festival);
+        if (loadingStatus) loadingStatus.classList.add("hidden");
+
+        const pushTitleEl = document.getElementById("pushTitle");
+        if (pushTitleEl)
+          pushTitleEl.innerText = `🔔 專屬您的【${userData.intentLabel}】關懷`;
+
+        const pushBadgeEl = document.getElementById("pushBadge");
+        if (pushBadgeEl)
+          pushBadgeEl.innerText = `限定組合價 $${finalBundle.toLocaleString()} · 查看`;
+
+        if (pushBody) {
+          let index = 0;
+          pushBody.innerText = "";
+          pushBody.classList.add("typing-effect");
+          if (typingTimer) clearInterval(typingTimer);
+
+          typingTimer = setInterval(() => {
+            if (index < targetText.length) {
+              pushBody.innerText += targetText.charAt(index);
+              index++;
+            } else {
+              clearInterval(typingTimer);
+              pushBody.classList.remove("typing-effect");
+            }
+          }, 15);
+        }
+      }
+
+      function initPage() {
+        const now = new Date();
+        const mockTimeEl = document.getElementById("mockTime");
+        if (mockTimeEl) {
+          mockTimeEl.innerText = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+        }
+        updateDemoScenario();
+      }
+
+      window.onload = initPage;
+    </script>
+  </body>
+</html>
