@@ -12,7 +12,6 @@ const Holidays = require("date-holidays");
 
 const app = express();
 const preferredPort = Number(process.env.PORT || 3001);
-const fallbackPorts = [preferredPort, 3000, 3002, 3003, 3004];
 
 app.use(express.json());
 app.use(express.static("."));
@@ -104,48 +103,37 @@ function parseDateInTaipei(dateString) {
 }
 
 async function fetchCurrentWeather(cityName = "臺北市") {
-  // 現在不再抓取 F-C0032-001 的溫度欄位，僅回傳站名、地區與天氣描述
-  const fallbackWeather = {
-    source: "fallback-local",
-    stationName: cityName,
+  if (!CWA_API_KEY) {
+    throw new Error("CWA_WEATHER_API_KEY is missing");
+  }
+
+  const data = await fetchJsonWithTimeout(
+    buildCwaUrl("F-C0032-001", { locationName: cityName }),
+  );
+  const locations = data?.records?.location || [];
+  const location = pickFirst(locations);
+  if (!location) {
+    throw new Error(`No weather location found for ${cityName}`);
+  }
+
+  const weatherElements = getField(location, "weatherElement", []);
+  const weatherElement = weatherElements.find(
+    (item) => getField(item, "elementName") === "Wx",
+  );
+  const timeList = getField(weatherElement, "time", []);
+
+  const weatherText = getField(pickFirst(timeList), "parameter.parameterName");
+  if (!weatherText) {
+    throw new Error(`No weather text found for ${cityName}`);
+  }
+
+  return {
+    source: "CWA F-C0032-001",
+    stationName: getField(location, "locationName", cityName),
     countyName: cityName,
-    weatherText: "天氣資訊暫時不可用",
+    weatherText,
     updatedAt: new Date().toLocaleString("zh-TW"),
   };
-
-  if (!CWA_API_KEY) {
-    return fallbackWeather;
-  }
-
-  try {
-    const data = await fetchJsonWithTimeout(
-      buildCwaUrl("F-C0032-001", { locationName: cityName }),
-    );
-    const locations = data?.records?.location || [];
-    const location = pickFirst(locations);
-    if (!location) return fallbackWeather;
-
-    const weatherElements = getField(location, "weatherElement", []);
-    const weatherElement = weatherElements.find(
-      (item) => getField(item, "elementName") === "Wx",
-    );
-    const timeList = getField(weatherElement, "time", []);
-
-    const weatherText =
-      getField(pickFirst(timeList), "parameter.parameterName") ||
-      fallbackWeather.weatherText;
-
-    return {
-      source: "CWA F-C0032-001",
-      stationName: getField(location, "locationName", cityName),
-      countyName: cityName,
-      weatherText,
-      updatedAt: new Date().toLocaleString("zh-TW"),
-    };
-  } catch (error) {
-    console.warn("fetchCurrentWeather fallback:", error.message);
-    return fallbackWeather;
-  }
 }
 
 async function fetchEarthquakeSummary() {
@@ -256,8 +244,7 @@ async function fetchClimateAlerts(targetCounty = "臺北市") {
       }
       return extracted;
     } catch (err) {
-      console.warn(`Fetch dataset ${dataset.id} failed:`, err.message);
-      return [];
+      throw new Error(`Fetch dataset ${dataset.id} failed: ${err.message}`);
     }
   });
 
@@ -649,7 +636,7 @@ app.post("/api/generate", async (req, res) => {
         holiday: holidayInfo,
         disaster: disasterInfo,
       },
-      model: "gemini-or-fallback",
+      model: "gemini",
     });
   } catch (err) {
     console.error(err);
@@ -660,19 +647,12 @@ app.post("/api/generate", async (req, res) => {
 });
 
 function startServer(portIndex = 0) {
-  const port = fallbackPorts[portIndex];
+  const port = preferredPort;
   const server = app.listen(port, () => {
     console.log(`Server listening on http://localhost:${port}`);
   });
 
   server.on("error", (error) => {
-    if (error.code === "EADDRINUSE" && portIndex + 1 < fallbackPorts.length) {
-      console.warn(
-        `Port ${port} is in use, trying ${fallbackPorts[portIndex + 1]}...`,
-      );
-      startServer(portIndex + 1);
-      return;
-    }
     console.error(error);
     process.exit(1);
   });
