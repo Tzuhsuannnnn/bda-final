@@ -26,9 +26,10 @@ app.use((req, res, next) => {
 });
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const MODEL_NAME = process.env.MODEL_NAME || "models/gemini-mini";
+const GEMINI_MODEL = String(
+  process.env.GEMINI_MODEL || process.env.MODEL_NAME || "gemini-2.5-flash",
+).replace(/^models\//, "");
 const CWA_API_KEY = process.env.CWA_WEATHER_API_KEY;
-const ENABLE_GEMINI = process.env.ENABLE_GEMINI === "true";
 
 function safeRoundNumber(value) {
   const num = Number(value);
@@ -274,11 +275,166 @@ async function fetchClimateAlerts(targetCounty = "臺北市") {
   return selected;
 }
 
+// 颱風特報：C0034-005，抓 +-7 天的範圍，支援不同回傳格式（info 或 TropicalCyclones）
+async function fetchTyphoonAlerts(targetCounty = "臺北市") {
+  if (!CWA_API_KEY) return [];
+
+  const datasetId = "W-C0034-005";
+  const todayStr = getTaipeiDateString();
+  const todayMid = parseDateInTaipei(todayStr).getTime();
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  const minTime = todayMid - sevenDaysMs;
+  const maxTime = todayMid + sevenDaysMs + (24 * 60 * 60 * 1000 - 1);
+
+  function isWithinSevenDays(startTimeStr, endTimeStr) {
+    const startMs = new Date(startTimeStr).getTime();
+    const endMs = new Date(endTimeStr).getTime();
+    if (Number.isNaN(startMs) || Number.isNaN(endMs)) return false;
+    return startMs <= maxTime && endMs >= minTime;
+  }
+
+  try {
+    // 嘗試多個常見的 resource id，提升容錯
+    const candidateIds = ["W-C0034-005", "W-C0034-001", "C0034-005"];
+    let data = null;
+    let usedId = null;
+    let lastErr = null;
+    for (const candidate of candidateIds) {
+      try {
+        const url = buildCwaUrl(candidate);
+        data = await fetchJsonWithTimeout(url);
+        usedId = candidate;
+        break;
+      } catch (e) {
+        lastErr = e;
+        continue;
+      }
+    }
+    if (!data) {
+      throw new Error(
+        `All typhoon dataset fetch attempts failed: ${lastErr?.message || "no response"}`,
+      );
+    }
+    const infos = data?.records?.info || [];
+    const extracted = [];
+
+    // 如果 API 回傳的是標準 info 陣列（舊式格式）
+    if (Array.isArray(infos) && infos.length > 0) {
+      for (const info of infos) {
+        const areas = (info?.area || [])
+          .map((area) => getField(area, "areaDesc", ""))
+          .filter(Boolean);
+
+        const startTimeStr =
+          info.onset || info.effective || info.expires || null;
+        const endTimeStr = info.expires || info.onset || info.effective || null;
+
+        if (!startTimeStr || !endTimeStr) continue;
+        if (!isWithinSevenDays(startTimeStr, endTimeStr)) continue;
+
+        const alertTitle =
+          (info.parameter || []).find(
+            (item) => item.valueName === "alert_title",
+          )?.value ||
+          info.headline ||
+          "颱風警報";
+
+        extracted.push({
+          datasetId,
+          alertType: "颱風警報",
+          headline: info.headline || alertTitle,
+          county: areas.join("、") || targetCounty,
+          description: info.description || alertTitle,
+          startTime: startTimeStr,
+          endTime: endTimeStr,
+          web: info.web || null,
+        });
+      }
+    }
+
+    // 如果 API 回傳的是 TropicalCyclones 結構 (C0034-005 常見)
+    const tcs = data?.records?.TropicalCyclones?.TropicalCyclone || [];
+    if (Array.isArray(tcs) && tcs.length > 0) {
+      for (const tc of tcs) {
+        const name =
+          tc.CwaTyphoonName || tc.TyphoonName || tc.CwaTdNo || "颱風";
+        const fixes = tc.AnalysisData?.Fix || [];
+        if (!Array.isArray(fixes) || fixes.length === 0) continue;
+        const first = fixes[0];
+        const last = fixes[fixes.length - 1];
+
+        const startTimeStr = first.DateTime || first.Date || null;
+        const endTimeStr = last.DateTime || last.Date || null;
+
+        if (!startTimeStr || !endTimeStr) continue;
+        if (!isWithinSevenDays(startTimeStr, endTimeStr)) continue;
+
+        const fromDir =
+          first.MovingDirection || first.Movement || first.Moving || "未知";
+        const toDir =
+          last.MovingDirection || last.Movement || last.Moving || "未知";
+
+        const description = `${name} 從 ${fromDir} 向 ${toDir} 移動`;
+        console.log(
+          `fetchTyphoonAlerts: found ${name}, fixes=${fixes.length}, start=${startTimeStr}, end=${endTimeStr}, usedId=${usedId}`,
+        );
+
+        extracted.push({
+          datasetId,
+          alertType: "颱風警報",
+          headline: name,
+          county: targetCounty,
+          description,
+          startTime: startTimeStr,
+          endTime: endTimeStr,
+          web: null,
+        });
+      }
+    }
+
+    if (extracted.length === 0) return [];
+
+    // 選出接近今天中點的一筆
+    extracted.sort((a, b) => {
+      const aMid =
+        (new Date(a.startTime).getTime() + new Date(a.endTime).getTime()) / 2;
+      const bMid =
+        (new Date(b.startTime).getTime() + new Date(b.endTime).getTime()) / 2;
+      return Math.abs(aMid - todayMid) - Math.abs(bMid - todayMid);
+    });
+
+    return [extracted[0]];
+  } catch (err) {
+    throw new Error(`Fetch dataset ${datasetId} failed: ${err.message}`);
+  }
+}
+
 async function fetchMajorDisasterSummary(targetCounty = "臺北市") {
-  const [earthquake, alerts] = await Promise.all([
-    fetchEarthquakeSummary(),
-    fetchClimateAlerts(targetCounty),
-  ]);
+  let earthquake = null;
+  let climateAlerts = [];
+  let typhoonAlerts = [];
+
+  try {
+    earthquake = await fetchEarthquakeSummary();
+  } catch (err) {
+    console.warn("fetchEarthquakeSummary failed:", err.message);
+  }
+
+  try {
+    climateAlerts = await fetchClimateAlerts(targetCounty);
+  } catch (err) {
+    console.warn("fetchClimateAlerts failed:", err.message);
+    climateAlerts = [];
+  }
+
+  try {
+    typhoonAlerts = await fetchTyphoonAlerts(targetCounty);
+  } catch (err) {
+    console.warn("fetchTyphoonAlerts failed:", err.message);
+    typhoonAlerts = [];
+  }
+
+  const alerts = (climateAlerts || []).concat(typhoonAlerts || []);
 
   const parts = [];
 
@@ -294,7 +450,6 @@ async function fetchMajorDisasterSummary(targetCounty = "臺北市") {
   }
 
   if (alerts && alerts.length > 0) {
-    // 依據型態歸納摘要
     const alertSummaries = alerts
       .slice(0, 3)
       .map((item) => `[${item.alertType}] ${item.county} ${item.description}`);
@@ -306,9 +461,9 @@ async function fetchMajorDisasterSummary(targetCounty = "臺北市") {
   }
 
   return {
-    source: "CWA E-A0015-001 + W-C0033-003/004/005",
+    source: "CWA E-A0015-001 + W-C0033-003/004/005 + W-C0034-005",
     earthquake,
-    alerts, // 這裡會包含前端動態 Checkbox 所需的完整特報列表
+    alerts,
     summaryText: parts.join("｜"),
   };
 }
@@ -452,6 +607,17 @@ function formatHolidayContext(holidayInfo) {
     .join("｜");
 }
 
+function buildHolidayChoiceText(item) {
+  if (!item) return "";
+  return [
+    item.name || item.nameEn || "節慶",
+    item.dateString ? `（${item.dateString}` : "（",
+    typeof item.diffDays === "number" ? `，${item.diffDays} 天後）` : "）",
+  ]
+    .join("")
+    .replace("（，", "（");
+}
+
 function formatEarthquakeContext(earthquake) {
   if (!earthquake) return null;
   return joinNonEmpty([
@@ -526,6 +692,50 @@ function buildUserPersonaPrompt(userData) {
   return "會員狀態：一般推薦";
 }
 
+async function generateGeminiCopy(prompt) {
+  if (!GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY is missing");
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+  const body = {
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: prompt }],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.25,
+      //maxOutputTokens: 200,
+    },
+  };
+
+  const fetchRes = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!fetchRes.ok) {
+    const errText = await fetchRes.text();
+    throw new Error(`Model API error: ${errText}`);
+  }
+
+  const json = await fetchRes.json();
+  const text = (json?.candidates || [])
+    .flatMap((candidate) => candidate?.content?.parts || [])
+    .map((part) => part?.text || "")
+    .join("")
+    .trim();
+
+  if (!text) {
+    throw new Error("Model returned no text");
+  }
+
+  return text;
+}
+
 app.post("/api/generate", async (req, res) => {
   try {
     const {
@@ -577,56 +787,8 @@ app.post("/api/generate", async (req, res) => {
       : "";
     const user = buildUserPersonaPrompt(userData);
 
-    const prompt = `角色: 商品推薦文案撰寫小編。目標: 根據外部資訊，針對使用者的猶豫點提供 50 字以內 ${productInfo} 主商品、互補品的情境化推播文案，語氣真誠、生活化、幫助使用者做決定，若有需要可供此組商品一起購買之優惠。\n\n${userLabel}\n${user}\n外部資訊（依勾選納入）:\n${selectedContextText}。`;
-
-    if (!ENABLE_GEMINI || !GEMINI_API_KEY) {
-      return res.status(500).json({
-        error: "Gemini is disabled or GEMINI_API_KEY is missing",
-        promptUsed: prompt,
-      });
-    }
-
-    const url = `https://generativelanguage.googleapis.com/v1beta2/${MODEL_NAME}:generateText?key=${GEMINI_API_KEY}`;
-    const body = {
-      prompt: { text: prompt },
-      temperature: 0.25,
-      maxOutputTokens: 200,
-    };
-
-    const fetchRes = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    if (!fetchRes.ok) {
-      const errText = await fetchRes.text();
-      console.error("Model API error:", errText);
-      return res
-        .status(502)
-        .json({ error: "Model API error", details: errText });
-    }
-
-    const jsonText = await fetchRes.text();
-    let json = {};
-    if (jsonText) {
-      try {
-        json = JSON.parse(jsonText);
-      } catch (parseError) {
-        console.warn("Gemini response parse error", parseError.message);
-      }
-    }
-
-    const text =
-      (json?.candidates && json.candidates[0] && json.candidates[0].output) ||
-      json?.text;
-
-    if (!text) {
-      return res.status(502).json({
-        error: "Model returned no text",
-        details: json,
-      });
-    }
+    const prompt = `你是一位電商line訊息文案撰寫員，要簡短文案。根據外部資訊(不用在乎縣市)，輸出最終文案，不要解釋、不要標題、不要角色說明。\n\n需求：針對使用者的猶豫點，語氣真誠、生活化，提到主商品與互補品。\n\n商品資訊：${productInfo}\n${userLabel}\n${user}\n外部資訊:\n${selectedContextText}`;
+    let text = await generateGeminiCopy(prompt);
 
     return res.json({
       text,
@@ -637,6 +799,7 @@ app.post("/api/generate", async (req, res) => {
         disaster: disasterInfo,
       },
       model: "gemini",
+      modelName: GEMINI_MODEL,
     });
   } catch (err) {
     console.error(err);

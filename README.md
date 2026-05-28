@@ -1,11 +1,11 @@
 # BDA Final — Backend for LLM Integration
 
-This repository contains a simple frontend demo and a minimal Node.js backend that enriches prompts with real CWA weather and disaster data, plus Taiwan holiday data from `date-holidays`. Gemini is opt-in only, so the app works even when no model key is configured.
+This repository contains a simple frontend demo and a minimal Node.js backend that enriches prompts with real CWA weather and disaster data, plus Taiwan holiday data from `date-holidays`. Gemini is used directly for copy generation.
 
 Environment variables (create a `.env` file):
 
-- `CWA_WEATHER_API_KEY` — required for fetching current temperature, current weather, earthquake reports, and weather alerts from the Taiwan CWA open data platform.
-- `GEMINI_API_KEY` — your API key for the generative model provider.
+- `CWA_WEATHER_API_KEY` — required for fetching 及時天氣, 豪大雨特報(+-5天), 低溫特報(+-5天), 高溫特報(+-5天), 颱風警報(+-7) from the Taiwan CWA open data platform.
+- `GEMINI_API_KEY` or `Gemini_API_KEY` — your Gemini API key.
 
 Dependencies are installed through `npm install`, including `express`, `dotenv`, and `date-holidays`.
 
@@ -24,4 +24,4 @@ Endpoint:
   - `context.holiday` contains the next Taiwan public holiday within 30 days, if any.
   - `context.disaster` contains earthquake and weather-alert summaries.
 
-Note: This example uses the public Generative Language endpoint pattern only when `ENABLE_GEMINI=true`. If `CWA_WEATHER_API_KEY` is missing, the backend will not be able to fetch the CWA context. Holiday data comes from the local Taiwan holiday library and does not require a key.
+Note: The backend always calls Gemini for `/api/generate`. If `CWA_WEATHER_API_KEY` is missing, the backend will not be able to fetch the CWA context. Holiday data comes from the local Taiwan holiday library and does not require a key.
