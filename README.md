@@ -4,7 +4,7 @@
 
 環境變數（請建立 `.env` 檔案）：
 
-- `CWA_WEATHER_API_KEY` — 用於從台灣中央氣象署開放資料平台取得即時氣溫、天氣狀況、地震報告與天氣警特報。
+- `CWA_WEATHER_API_KEY` — 用於從台灣中央氣象署開放資料平台取得及時天氣, 豪大雨特報(+-5天), 低溫特報(+-5天), 高溫特報(+-5天), 颱風警報(+-7)。
 - `GEMINI_API_KEY` — 生成式模型的 API 金鑰。
 
 透過 `npm install` 安裝相依套件，包含 `express`、`dotenv` 與 `date-holidays`。
