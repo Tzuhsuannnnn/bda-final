@@ -1,0 +1,11 @@
+__pycache__/
+session*.csv
+Member.csv
+Order*.csv
+Sale*.csv
+Segment*.csv
+todo.md
+*hesitation_users.csv
+horizontal_hesitation_users_shop.csv
+vertical_hesitation_users_shop.csv
+RZSHERLBqjPGOUFO01RYew_category_mapping_multicat.csv
