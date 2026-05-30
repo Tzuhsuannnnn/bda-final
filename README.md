@@ -4,7 +4,7 @@
 從 Behavior 資料中，找出同`ShopMemberId`和同`SalePage`的資料，篩選 add 後 24 小時沒有 Purcahse 記錄的名單
 
 ## 檔案說明
-- 主程式：
+- 主程式：[PurchaseHesitation.py](PurchaseHesitation.py)
 - 輸出檔案：`behavior_add_purchase_filtered.csv`, `add_no_purchase_within_24h.csv`
 
 ## 作法
