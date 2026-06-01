@@ -1,2 +1,12 @@
 node_modules/
 .env
+__pycache__/
+Order_TS_*.csv
+orders_*.csv
+sessions_*.csv
+member_*.csv
+salepage_*.csv
+relation_product_*.csv
+*.parquet
+bundle_recommendation.csv
+recommendation.csv
