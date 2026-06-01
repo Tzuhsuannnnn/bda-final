@@ -18,6 +18,7 @@ npm start
 
 API 端點：
 
+- `GET /api/recsys-products` — 回傳真實 recsys 商品清單與最佳互補品，前端可直接用於搜尋輸入與下拉選單。
 - `POST /api/generate` — 接受 JSON `{ userKey, weather, festival, userData }`，回傳 `{ text, promptUsed, context }`。
   - `userData` 應包含前端已知的商品與使用者欄位，例如 `{ name, cityName, mainProduct, mainPrice, recProduct, recPrice, intentLabel }`。
   - `context.weather` 包含解析後的 CWA 測站與天氣文字。
@@ -41,6 +42,7 @@ API 端點：
 - 輸出：`Order_TG_filtered.csv`、`Order_TS_filtered.csv`
 
 執行方式：
+
 ```bash
 python data_cleaner.py
 ```
@@ -50,8 +52,10 @@ python data_cleaner.py
 ### `relation_product.ipynb`
 
 基於歷史子單資料，利用 **FP-Growth 演算法** 挖掘商品之間的關聯規則（Market Basket Analysis），產出互補商品關聯對照表 `relation_product.csv`。
+前端商品組合選擇已直接串接這份關聯規則資料，不再使用手寫 mock 商品。
 
 **處理流程：**
+
 1. 讀取 `Order_TS_filtered.csv`，篩選已完成交易（`StatusDef == 'Finish'`）
 2. 以前 80% 時間區間作為訓練集（避免資料洩漏）
 3. 篩選含 2 件以上商品的訂單，限縮至 Top 500 高頻商品
@@ -63,15 +67,15 @@ python data_cleaner.py
 
 **輸出欄位（`relation_product.csv`）：**
 
-| 欄位 | 說明 |
-|------|------|
-| `target_title` | 目標商品名稱 |
-| `complementary_title` | 互補商品名稱 |
-| `target_product_id` | 目標商品 SKU（加密） |
-| `complementary_product_id` | 互補商品 SKU（加密） |
-| `target_salepage_id` | 目標商品頁 ID |
-| `complementary_salepage_id` | 互補商品頁 ID |
-| `score` | 綜合評分（confidence × log(lift)） |
-| `confidence` | 信賴度 |
-| `lift` | 提升度 |
-| `support` | 支持度 |
+| 欄位                        | 說明                               |
+| --------------------------- | ---------------------------------- |
+| `target_title`              | 目標商品名稱                       |
+| `complementary_title`       | 互補商品名稱                       |
+| `target_product_id`         | 目標商品 SKU（加密）               |
+| `complementary_product_id`  | 互補商品 SKU（加密）               |
+| `target_salepage_id`        | 目標商品頁 ID                      |
+| `complementary_salepage_id` | 互補商品頁 ID                      |
+| `score`                     | 綜合評分（confidence × log(lift)） |
+| `confidence`                | 信賴度                             |
+| `lift`                      | 提升度                             |
+| `support`                   | 支持度                             |

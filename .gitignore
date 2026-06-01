@@ -10,3 +10,6 @@ relation_product_*.csv
 *.parquet
 bundle_recommendation.csv
 recommendation.csv
+horizontal_hesitation_users_shop.csv
+vertical_hesitation_users_shop.csv
+relation_product_RZSHERLBqjPGOUFO01RYew==.csv

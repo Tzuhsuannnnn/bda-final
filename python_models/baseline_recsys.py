@@ -5,12 +5,12 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List
 
-from infer_recsys import (
+from python_models.infer_recsys import (
     load_feature_tables,
     build_purchase_map,
     evaluate_recommendations
 )
-from recsys_common import detect_shop_id, load_metadata, load_orders
+from python_models.recsys_common import detect_shop_id, load_metadata, load_orders
 
 def recommend_popular(
     product_df: pd.DataFrame,

@@ -52,24 +52,32 @@
         <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
           <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center">
             <i class="fa-solid fa-user-tag text-blue-500 mr-2"></i> 1.
-            選擇測試會員
+            輸入測試會員
           </h2>
           <label class="block text-sm font-medium text-gray-600 mb-2"
-            >切換會員檢視不同猶豫標籤：</label
+            >輸入 ShopMemberId 查詢猶豫類型與商品：</label
           >
-          <select
-            id="userSelect"
-            onchange="updateDemoScenario()"
-            class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
-          >
-            <option value="user_01">
-              會員 A - 款式猶豫 (高頻切換同類商品)
-            </option>
-            <option value="user_02">會員 B - 規格猶豫 (單頁停留過久)</option>
-            <option value="user_03">會員 C - 價格猶豫 (購物車滯留)</option>
-          </select>
+          <div class="flex gap-2">
+            <input
+              id="memberIdInput"
+              type="text"
+              placeholder="貼上 ShopMemberId…"
+              class="flex-1 p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition text-sm"
+              onkeydown="if (event.key === 'Enter') lookupUser();"
+            />
+            <button
+              type="button"
+              onclick="lookupUser()"
+              class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl transition shadow"
+            >
+              查詢
+            </button>
+          </div>
+          <div id="userLookupStatus" class="mt-2 text-xs text-gray-400">
+            請輸入 ShopMemberId 後按查詢。
+          </div>
 
-          <div class="mt-4 flex flex-wrap gap-2" id="userTags"></div>
+          <div class="mt-3 flex flex-wrap gap-2" id="userTags"></div>
         </div>
 
         <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -95,53 +103,112 @@
         </div>
 
         <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center">
-            <i class="fa-solid fa-calculator text-indigo-500 mr-2"></i> 3.
-            推薦與定價引擎輸出
+          <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center">
+            <i class="fa-solid fa-magnifying-glass text-indigo-500 mr-2"></i> 3.
+            商品組合選擇
           </h2>
-          <div class="space-y-3 text-sm">
-            <div class="bg-indigo-50 p-3 rounded-xl">
-              <span
-                class="block text-xs font-semibold text-indigo-600 uppercase"
-                >猶豫主商品 (Behavior/SalePage)</span
+          <div class="space-y-4 text-sm">
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-2"
+                >從查詢到的猶豫商品中選擇主商品，系統自動帶出互補品：</label
               >
-              <span id="mainProduct" class="font-bold text-gray-800"
-                >載入中...</span
-              >
-              <span id="mainPrice" class="block text-xs text-gray-500 mt-0.5"
-                >單價: $--</span
-              >
+              <input
+                id="mainProductSearch"
+                list="mainProductOptions"
+                oninput="handleProductSearchInput()"
+                onchange="resolveProductSelection()"
+                onkeydown="handleProductSearchKeydown(event)"
+                placeholder="開始輸入主商品名稱，例如：熱療撫紋導入儀"
+                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
+              />
+              <datalist id="mainProductOptions"></datalist>
             </div>
-            <div class="bg-amber-50 p-3 rounded-xl">
-              <span class="block text-xs font-semibold text-amber-600 uppercase"
-                >FP-Growth / Two-Tower 推薦互補品</span
+
+            <div>
+              <label class="block text-sm font-medium text-gray-600 mb-2"
+                >或直接從下拉選單挑選：</label
               >
-              <span id="recProduct" class="font-bold text-gray-800"
-                >載入中...</span
+              <select
+                id="mainProductSelect"
+                onchange="selectProductByTitle(this.value)"
+                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
               >
-              <span id="recPrice" class="block text-xs text-gray-500 mt-0.5"
-                >單價: $--</span
-              >
+                <option value="">載入中...</option>
+              </select>
             </div>
+
             <div
-              class="border-t border-dashed border-gray-200 pt-3 flex justify-between items-center px-1"
-            >
-              <span class="font-medium text-gray-600">組合原始總價:</span>
-              <span
-                id="originalPrice"
-                class="line-through text-gray-400 font-semibold"
-                >$--</span
-              >
-            </div>
+              id="productSuggestionList"
+              class="grid grid-cols-1 gap-2"
+            ></div>
+
             <div
-              class="flex justify-between items-center px-1 bg-rose-50 p-2 rounded-lg"
+              id="productSelectionStatus"
+              class="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3 text-xs text-gray-500"
             >
-              <span class="font-bold text-rose-600"
-                >促銷組合價 (定價引擎):</span
-              >
-              <span id="bundlePrice" class="text-xl font-black text-rose-600"
-                >$--</span
-              >
+              請先在上方輸入並查詢 ShopMemberId，商品清單將自動更新。
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div class="bg-indigo-50 p-3 rounded-xl">
+                <span
+                  class="block text-xs font-semibold text-indigo-600 uppercase"
+                  >主商品</span
+                >
+                <span id="mainProduct" class="font-bold text-gray-800"
+                  >尚未選擇</span
+                >
+                <span
+                  id="mainProductMeta"
+                  class="block text-xs text-gray-500 mt-0.5"
+                  >請輸入關鍵字搜尋。</span
+                >
+              </div>
+              <div class="bg-amber-50 p-3 rounded-xl">
+                <span
+                  class="block text-xs font-semibold text-amber-600 uppercase"
+                  >自動帶出的互補品</span
+                >
+                <span id="recProduct" class="font-bold text-gray-800"
+                  >尚未選擇</span
+                >
+                <span
+                  id="recProductMeta"
+                  class="block text-xs text-gray-500 mt-0.5"
+                  >選到主商品後會自動更新。</span
+                >
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div class="bg-rose-50 p-3 rounded-xl">
+                <span
+                  class="block text-xs font-semibold text-rose-600 uppercase"
+                  >關聯分數</span
+                >
+                <span id="relationScore" class="font-bold text-rose-700 text-lg"
+                  >--</span
+                >
+              </div>
+              <div class="bg-emerald-50 p-3 rounded-xl">
+                <span
+                  class="block text-xs font-semibold text-emerald-600 uppercase"
+                  >信賴度</span
+                >
+                <span
+                  id="relationConfidence"
+                  class="font-bold text-emerald-700 text-lg"
+                  >--</span
+                >
+              </div>
+              <div class="bg-sky-50 p-3 rounded-xl">
+                <span class="block text-xs font-semibold text-sky-600 uppercase"
+                  >提升度</span
+                >
+                <span id="relationLift" class="font-bold text-sky-700 text-lg"
+                  >--</span
+                >
+              </div>
             </div>
           </div>
         </div>
@@ -174,14 +241,12 @@
                 class="text-gray-800"
               ></span
               >) + 互補品(<span id="promptProd2" class="text-gray-800"></span
-              >)，原價
-              <span id="promptOrigPrice" class="text-gray-800"></span
-              >，特惠組合價
+              >)，關聯分數
               <span
-                id="promptComboPrice"
+                id="promptRelationScore"
                 class="text-rose-500 font-semibold"
-              ></span>
-              。
+              ></span
+              >。
             </p>
           </div>
         </div>
@@ -455,83 +520,404 @@
         element.innerText = value ?? "";
       }
 
-      const mockDatabase = {
-        user_01: {
-          name: "陳小姐",
-          gender: "女",
-          intentLabel: "款式猶豫",
-          mainProduct:
-            "熱療撫紋導入儀(音波震動版)+一夜透亮活膚精露(10ML 隨身瓶)",
-          mainPrice: 2480,
-          recProduct: "山茶花黃金護唇膏",
-          recPrice: 880,
-          discountFormula: (p1, p2) => Math.round((p1 + p2) * 0.85),
-        },
-        user_02: {
-          name: "林先生",
-          gender: "男",
-          intentLabel: "規格猶豫",
-          mainProduct:
-            "熱療撫紋導入儀(音波震動版)+一夜透亮活膚精露(10ML 隨身瓶)",
-          mainPrice: 12000,
-          recProduct: "山茶花黃金護唇膏",
-          recPrice: 1500,
-          discountFormula: (p1, p2) => Math.round(p1 + p2 * 0.3),
-        },
-        user_03: {
-          name: "張小姐",
-          gender: "女",
-          intentLabel: "價格猶豫",
-          mainProduct:
-            "熱療撫紋導入儀(音波震動版)+一夜透亮活膚精露(10ML 隨身瓶)",
-          mainPrice: 3950,
-          recProduct: "山茶花黃金護唇膏",
-          recPrice: 2100,
-          discountFormula: (p1, p2) => Math.round(p1 + p2 - 1000),
-        },
-      };
+      let latestProductCatalog = [];
+      let latestProductSelection = null;
+      let productSearchTimer = null;
+
+      function normalizeProductText(value) {
+        return String(value || "")
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, "");
+      }
+
+      function formatProductMetric(value) {
+        const num = Number(value);
+        if (!Number.isFinite(num)) return "--";
+        return Number.isInteger(num) ? String(num) : num.toFixed(3);
+      }
+
+      function renderRecsysOptions() {
+        const datalist = document.getElementById("mainProductOptions");
+        if (!datalist) return;
+
+        datalist.innerHTML = latestProductCatalog
+          .map(
+            (product) =>
+              `<option value="${escapeHtml(product.title)}"></option>`,
+          )
+          .join("");
+
+        const select = document.getElementById("mainProductSelect");
+        if (select) {
+          select.innerHTML = [
+            `<option value="">請選擇主商品</option>`,
+            ...latestProductCatalog.map(
+              (product) =>
+                `<option value="${escapeHtml(product.title)}">${escapeHtml(product.title)}</option>`,
+            ),
+          ].join("");
+        }
+      }
+
+      function renderProductSuggestions(query = "") {
+        const container = document.getElementById("productSuggestionList");
+        if (!container) return;
+
+        const normalizedQuery = normalizeProductText(query);
+        const filteredProducts = normalizedQuery
+          ? latestProductCatalog.filter((product) =>
+              normalizeProductText(product.title).includes(normalizedQuery),
+            )
+          : latestProductCatalog.slice(0, 8);
+
+        if (!filteredProducts.length) {
+          container.innerHTML = `
+            <div class="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">
+              找不到相符商品，請改用下拉選單或更完整的關鍵字。
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = filteredProducts
+          .slice(0, 8)
+          .map((product) => {
+            const bestComplement = product.bestComplement;
+            return `
+              <button
+                type="button"
+                onclick="selectProductByTitle(${JSON.stringify(product.title)})"
+                class="text-left rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-indigo-400 hover:bg-indigo-50"
+              >
+                <div class="text-sm font-medium text-gray-800">${escapeHtml(product.title)}</div>
+                <div class="mt-1 text-xs text-gray-500">
+                  ${bestComplement ? `推薦互補品：${escapeHtml(bestComplement.title)} ｜ 分數 ${formatProductMetric(bestComplement.score)}` : "目前沒有推薦互補品"}
+                </div>
+              </button>
+            `;
+          })
+          .join("");
+      }
+
+      function findProductMatch(query) {
+        const normalizedQuery = normalizeProductText(query);
+        if (!normalizedQuery || !latestProductCatalog.length) return null;
+
+        const exactMatch = latestProductCatalog.find(
+          (product) => normalizeProductText(product.title) === normalizedQuery,
+        );
+        if (exactMatch) return exactMatch;
+
+        const partialMatches = latestProductCatalog.filter((product) =>
+          normalizeProductText(product.title).includes(normalizedQuery),
+        );
+        if (!partialMatches.length) return null;
+
+        partialMatches.sort((left, right) => {
+          const rightScore = right.bestComplement?.score ?? -Infinity;
+          const leftScore = left.bestComplement?.score ?? -Infinity;
+          if (rightScore !== leftScore) return rightScore - leftScore;
+          return left.title.length - right.title.length;
+        });
+
+        return partialMatches[0];
+      }
+
+      function handleProductSearchInput() {
+        const input = document.getElementById("mainProductSearch");
+        renderProductSuggestions(input?.value || "");
+      }
+
+      function handleProductSearchKeydown(event) {
+        if (event.key !== "Enter") return;
+
+        event.preventDefault();
+        resolveProductSelection();
+      }
+
+      function updateProductSelectionDisplay(selection) {
+        const statusEl = document.getElementById("productSelectionStatus");
+        const mainProductEl = document.getElementById("mainProduct");
+        const mainProductMetaEl = document.getElementById("mainProductMeta");
+        const recProductEl = document.getElementById("recProduct");
+        const recProductMetaEl = document.getElementById("recProductMeta");
+        const relationScoreEl = document.getElementById("relationScore");
+        const relationConfidenceEl =
+          document.getElementById("relationConfidence");
+        const relationLiftEl = document.getElementById("relationLift");
+
+        if (!selection) {
+          if (statusEl) {
+            statusEl.innerText =
+              "請輸入主商品名稱，系統會從真實 recsys 關聯表中找出互補品。";
+          }
+          setTextContent("mainProduct", "尚未選擇");
+          setTextContent("mainProductMeta", "請輸入關鍵字搜尋。");
+          setTextContent("recProduct", "尚未選擇");
+          setTextContent("recProductMeta", "選到主商品後會自動更新。");
+          setTextContent("relationScore", "--");
+          setTextContent("relationConfidence", "--");
+          setTextContent("relationLift", "--");
+          return;
+        }
+
+        const bestComplement = selection.bestComplement || null;
+
+        if (mainProductEl)
+          mainProductEl.innerText = selection.title || "尚未選擇";
+        if (mainProductMetaEl) {
+          mainProductMetaEl.innerText = selection.productId
+            ? `ProductId: ${selection.productId}`
+            : selection.salePageId
+              ? `SalePageId: ${selection.salePageId}`
+              : `共 ${selection.relationCount || 0} 筆關聯資料`;
+        }
+
+        if (bestComplement) {
+          if (recProductEl)
+            recProductEl.innerText = bestComplement.title || "尚未選擇";
+          if (recProductMetaEl) {
+            recProductMetaEl.innerText = [
+              `ProductId: ${bestComplement.productId || "--"}`,
+              `SalePageId: ${bestComplement.salePageId || "--"}`,
+            ].join("｜");
+          }
+          if (relationScoreEl)
+            relationScoreEl.innerText = formatProductMetric(
+              bestComplement.score,
+            );
+          if (relationConfidenceEl)
+            relationConfidenceEl.innerText = formatProductMetric(
+              bestComplement.confidence,
+            );
+          if (relationLiftEl)
+            relationLiftEl.innerText = formatProductMetric(bestComplement.lift);
+          if (statusEl) {
+            statusEl.innerText = `已選擇 ${selection.title}，自動帶出 ${bestComplement.title}。`;
+          }
+        } else {
+          if (recProductEl) recProductEl.innerText = "目前沒有可用互補品";
+          if (recProductMetaEl)
+            recProductMetaEl.innerText = "請換一個主商品或重新載入資料。";
+          if (relationScoreEl) relationScoreEl.innerText = "--";
+          if (relationConfidenceEl) relationConfidenceEl.innerText = "--";
+          if (relationLiftEl) relationLiftEl.innerText = "--";
+          if (statusEl) {
+            statusEl.innerText = `已選擇 ${selection.title}，但目前沒有可用的互補品。`;
+          }
+        }
+      }
+
+      function applyProductSelection(selection) {
+        latestProductSelection = selection || null;
+
+        const input = document.getElementById("mainProductSearch");
+        if (input && selection?.title) {
+          input.value = selection.title;
+        }
+
+        const select = document.getElementById("mainProductSelect");
+        if (select && selection?.title) {
+          select.value = selection.title;
+        }
+
+        updateProductSelectionDisplay(latestProductSelection);
+        syncPromptPreview();
+      }
+
+      function selectProductByTitle(title) {
+        if (!title) {
+          updateProductSelectionDisplay(null);
+          syncPromptPreview();
+          return;
+        }
+
+        const matchedProduct = latestProductCatalog.find(
+          (product) => product.title === title,
+        );
+        if (!matchedProduct) {
+          return;
+        }
+
+        applyProductSelection(matchedProduct);
+        renderProductSuggestions(title);
+      }
+
+      function resolveProductSelection() {
+        const input = document.getElementById("mainProductSearch");
+        const query = input?.value || "";
+
+        if (!query.trim()) {
+          updateProductSelectionDisplay(null);
+          renderProductSuggestions("");
+          return;
+        }
+
+        const matchedProduct = findProductMatch(query);
+        if (matchedProduct) {
+          applyProductSelection(matchedProduct);
+          renderProductSuggestions(matchedProduct.title);
+          return;
+        }
+
+        const statusEl = document.getElementById("productSelectionStatus");
+        if (statusEl) {
+          statusEl.innerText = `找不到「${query}」對應的主商品，請改用下拉建議或重試搜尋。`;
+        }
+
+        renderProductSuggestions(query);
+      }
+
+      function debouncedResolveProductSelection() {
+        if (productSearchTimer) clearTimeout(productSearchTimer);
+        productSearchTimer = setTimeout(() => {
+          resolveProductSelection();
+        }, 180);
+      }
+
+      async function loadRecsysCatalog() {
+        const statusEl = document.getElementById("productSelectionStatus");
+        if (statusEl) {
+          statusEl.innerText = "正在載入真實 recsys 商品清單...";
+        }
+
+        for (const base of API_BASES) {
+          try {
+            const response = await fetch(`${base}/api/recsys-products`);
+            if (!response.ok) {
+              continue;
+            }
+
+            const data = await response.json();
+            latestProductCatalog = Array.isArray(data.products)
+              ? data.products
+              : [];
+            renderRecsysOptions();
+
+            const input = document.getElementById("mainProductSearch");
+            const existingQuery = input?.value?.trim() || "";
+            if (existingQuery) {
+              const selection = findProductMatch(existingQuery);
+              if (selection) {
+                applyProductSelection(selection);
+              }
+            } else if (latestProductCatalog.length) {
+              applyProductSelection(latestProductCatalog[0]);
+            } else {
+              updateProductSelectionDisplay(null);
+            }
+
+            renderProductSuggestions(existingQuery);
+            return;
+          } catch (error) {
+            console.warn("Failed to load recsys catalog from", base, error);
+          }
+        }
+
+        latestProductCatalog = [];
+        latestProductSelection = null;
+        renderRecsysOptions();
+        renderProductSuggestions("");
+        updateProductSelectionDisplay(null);
+
+        if (statusEl) {
+          statusEl.innerText =
+            "找不到 recsys 商品清單，請確認後端是否已有 relation_product CSV。";
+        }
+      }
+
+      let currentUserData = { shopMemberId: null, intentLabel: null };
+
+      async function lookupUser() {
+        const input = document.getElementById("memberIdInput");
+        const shopMemberId = (input?.value || "").trim();
+        const statusEl = document.getElementById("userLookupStatus");
+
+        if (!shopMemberId) {
+          if (statusEl) statusEl.innerText = "請輸入 ShopMemberId 後按查詢。";
+          return;
+        }
+
+        if (statusEl) {
+          statusEl.innerText = "查詢中...";
+          statusEl.className = "mt-2 text-xs text-gray-400";
+        }
+
+        try {
+          const { response } = await postJsonWithFallback(
+            "/api/user-products",
+            {
+              shopMemberId,
+            },
+          );
+          const data = await response.json();
+
+          if (!data.found) {
+            currentUserData = { shopMemberId: null, intentLabel: null };
+            document.getElementById("userTags").innerHTML = "";
+            latestProductCatalog = [];
+            renderRecsysOptions();
+            renderProductSuggestions("");
+            updateProductSelectionDisplay(null);
+            if (statusEl) {
+              statusEl.innerText =
+                "找不到此會員，請確認 ShopMemberId 是否正確。";
+              statusEl.className = "mt-2 text-xs text-rose-500";
+            }
+            return;
+          }
+
+          currentUserData = {
+            shopMemberId,
+            intentLabel: data.hesitationType,
+          };
+
+          if (statusEl) {
+            const note = data.usedFallback
+              ? "｜猶豫商品不在關聯資料庫，顯示全域推薦商品"
+              : "";
+            statusEl.innerText = `找到會員｜${data.hesitationType}｜共 ${data.products.length} 項商品${note}`;
+            statusEl.className = data.usedFallback
+              ? "mt-2 text-xs text-amber-600"
+              : "mt-2 text-xs text-emerald-600";
+          }
+
+          latestProductCatalog = data.products || [];
+          renderRecsysOptions();
+          renderProductSuggestions("");
+
+          if (latestProductCatalog.length) {
+            applyProductSelection(latestProductCatalog[0]);
+          } else {
+            updateProductSelectionDisplay(null);
+          }
+
+          updateDemoScenario(true);
+        } catch (err) {
+          if (statusEl) {
+            statusEl.innerText = `查詢失敗：${err.message}`;
+            statusEl.className = "mt-2 text-xs text-rose-500";
+          }
+          console.error(err);
+        }
+      }
 
       function updateDemoScenario(shouldLoadExternal = true) {
-        const userSelectEl = document.getElementById("userSelect");
-        if (!userSelectEl) return;
-
-        const userKey = userSelectEl.value;
-        const userData = mockDatabase[userKey];
-        if (!userData) return;
-
-        setTextContent("mainProduct", userData.mainProduct);
-        setTextContent(
-          "mainPrice",
-          `單價: $${userData.mainPrice.toLocaleString()}`,
-        );
-        setTextContent("recProduct", userData.recProduct);
-        setTextContent(
-          "recPrice",
-          `單價: $${userData.recPrice.toLocaleString()}`,
-        );
-
-        const origTotal = userData.mainPrice + userData.recPrice;
-        const finalBundle = userData.discountFormula(
-          userData.mainPrice,
-          userData.recPrice,
-        );
-
-        setTextContent("originalPrice", `$${origTotal.toLocaleString()}`);
-        setTextContent("bundlePrice", `$${finalBundle.toLocaleString()}`);
+        if (!currentUserData.intentLabel) return;
 
         const tagsContainer = document.getElementById("userTags");
         if (tagsContainer) {
           let badgeColor = "bg-blue-100 text-blue-800";
-          if (userData.intentLabel === "規格猶豫")
+          if (currentUserData.intentLabel === "規格猶豫")
             badgeColor = "bg-amber-100 text-amber-800";
-          if (userData.intentLabel === "價格猶豫")
+          if (currentUserData.intentLabel === "價格猶豫")
             badgeColor = "bg-rose-100 text-rose-800";
 
           tagsContainer.innerHTML = `
             <span class="px-2.5 py-1 rounded-md text-xs font-bold ${badgeColor}">
-                <i class="fa-solid fa-tag mr-1"></i> ${userData.intentLabel}
+              <i class="fa-solid fa-tag mr-1"></i> ${currentUserData.intentLabel}
             </span>
-            
           `;
         }
 
@@ -542,48 +928,48 @@
       }
 
       function syncPromptPreview() {
-        const userSelectEl = document.getElementById("userSelect");
-        if (!userSelectEl) return;
+        if (!currentUserData.intentLabel) return;
 
-        const userKey = userSelectEl.value;
-        const userData = mockDatabase[userKey];
-        if (!userData) return;
+        const selectedProduct = latestProductSelection || null;
+        const bestComplement = selectedProduct?.bestComplement || null;
+        const selectedContextLabels = getSelectedContextLabels();
+        const productSummary = selectedProduct
+          ? `${selectedProduct.title}${bestComplement?.title ? ` → ${bestComplement.title}` : ""}`
+          : "尚未選擇主商品";
+        const externalSummary =
+          selectedContextLabels.length > 0
+            ? selectedContextLabels.join("、")
+            : "未勾選任何外部資訊";
 
-        const weatherSummary =
-          latestExternalContext?.summary?.weatherText || "--";
-        const holidaySummary =
-          latestExternalContext?.summary?.holidayText || "30 天內無節慶";
-
-        const origTotal = userData.mainPrice + userData.recPrice;
-        const finalBundle = userData.discountFormula(
-          userData.mainPrice,
-          userData.recPrice,
+        setTextContent("promptIntent", currentUserData.intentLabel);
+        setTextContent(
+          "promptProd1",
+          selectedProduct?.title || "尚未選擇主商品",
+        );
+        setTextContent(
+          "promptProd2",
+          bestComplement?.title || "尚未帶出互補品",
+        );
+        setTextContent(
+          "promptRelationScore",
+          formatProductMetric(bestComplement?.score),
         );
 
-        setTextContent("promptGender", userData.gender);
-        setTextContent("promptIntent", userData.intentLabel);
-        setTextContent("promptWeather", weatherSummary);
-        setTextContent("promptFestival", holidaySummary);
-        setTextContent("promptProd1", userData.mainProduct);
-        setTextContent("promptProd2", userData.recProduct);
-        setTextContent("promptOrigPrice", `$${origTotal}`);
-        setTextContent("promptComboPrice", `$${finalBundle}`);
+        const select = document.getElementById("mainProductSelect");
+        if (select && selectedProduct?.title) {
+          select.value = selectedProduct.title;
+        }
 
         const summaryEl = document.getElementById("promptSelectedSummary");
         if (summaryEl) {
-          summaryEl.innerText =
-            getSelectedContextLabels().join("、") || "未勾選任何外部資訊";
+          summaryEl.innerText = `${productSummary}｜${externalSummary}`;
         }
       }
 
       // 🛠️ 嚴格模式：核心 Debug 區塊之一
       async function loadExternalContext() {
-        const userSelectEl = document.getElementById("userSelect");
-        if (!userSelectEl) return;
-
-        const userKey = userSelectEl.value;
-        const userData = mockDatabase[userKey];
-        if (!userData) return;
+        if (!currentUserData.intentLabel) return;
+        const userData = currentUserData;
 
         const apiStatusEl = document.getElementById("apiStatus");
         const apiStatusDetailEl = document.getElementById("apiStatusDetail");
@@ -662,31 +1048,37 @@
 
       // 🛠️ 嚴格模式：核心 Debug 區塊之二
       async function generateAIOutput() {
-        const userSelectEl = document.getElementById("userSelect");
-        if (!userSelectEl) return;
+        if (!currentUserData.intentLabel) {
+          const pushBody = document.getElementById("pushBody");
+          if (pushBody) pushBody.innerText = "請先查詢會員 ID 後再生成文案。";
+          return;
+        }
+        const userKey = currentUserData.shopMemberId;
+        const userData = currentUserData;
 
-        const userKey = userSelectEl.value;
-        const userData = mockDatabase[userKey];
-        if (!userData) return;
+        if (!latestProductSelection && latestProductCatalog.length) {
+          applyProductSelection(latestProductCatalog[0]);
+        }
 
         const weather = latestExternalContext?.summary?.weatherText || "";
         const festival = latestExternalContext?.summary?.holidayText || "";
         const selection = collectContextSelection();
 
-        const origTotal = userData.mainPrice + userData.recPrice;
-        const finalBundle = userData.discountFormula(
-          userData.mainPrice,
-          userData.recPrice,
-        );
-
-        setTextContent("promptGender", userData.gender);
         setTextContent("promptIntent", userData.intentLabel);
         setTextContent("promptWeather", weather);
         setTextContent("promptFestival", festival);
-        setTextContent("promptProd1", userData.mainProduct);
-        setTextContent("promptProd2", userData.recProduct);
-        setTextContent("promptOrigPrice", `$${origTotal}`);
-        setTextContent("promptComboPrice", `$${finalBundle}`);
+        setTextContent(
+          "promptProd1",
+          latestProductSelection?.title || "尚未選擇主商品",
+        );
+        setTextContent(
+          "promptProd2",
+          latestProductSelection?.bestComplement?.title || "尚未帶出互補品",
+        );
+        setTextContent(
+          "promptRelationScore",
+          formatProductMetric(latestProductSelection?.bestComplement?.score),
+        );
 
         const loadingStatus = document.getElementById("loadingStatus");
         const pushBody = document.getElementById("pushBody");
@@ -706,13 +1098,10 @@
             festival,
             selection,
             contextData: latestExternalContext?.context || null,
+            productSelection: latestProductSelection,
             userData: {
-              name: userData.name,
+              name: userData.shopMemberId || "",
               cityName: "臺北市",
-              mainProduct: userData.mainProduct,
-              mainPrice: userData.mainPrice,
-              recProduct: userData.recProduct,
-              recPrice: userData.recPrice,
               intentLabel: userData.intentLabel,
             },
             selectedContextKeys: selection.selectedContextKeys,
@@ -750,11 +1139,7 @@
 
         const pushTitleEl = document.getElementById("pushTitle");
         if (pushTitleEl)
-          pushTitleEl.innerText = `🔔 專屬您的【${userData.intentLabel}】關懷`;
-
-        const pushBadgeEl = document.getElementById("pushBadge");
-        if (pushBadgeEl)
-          pushBadgeEl.innerText = `限定組合價 $${finalBundle.toLocaleString()} · 查看`;
+          pushTitleEl.innerText = `🔔 專屬您的【${currentUserData.intentLabel}】關懷`;
 
         if (pushBody) {
           let index = 0;
@@ -774,13 +1159,12 @@
         }
       }
 
-      function initPage() {
+      async function initPage() {
         const now = new Date();
         const mockTimeEl = document.getElementById("mockTime");
         if (mockTimeEl) {
           mockTimeEl.innerText = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
         }
-        updateDemoScenario();
       }
 
       window.onload = initPage;
