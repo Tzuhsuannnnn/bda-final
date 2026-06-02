@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from recsys_common import (
+from python_models.recsys_common import (
     DEFAULT_TEXT_EMB_DIM,
     build_interactions,
     build_product_features,
@@ -22,7 +22,7 @@ from recsys_common import (
     negative_sampling,
     save_metadata,
 )
-from recsys_model import TwoTowerModel
+from python_models.recsys_model import TwoTowerModel
 
 USER_NUMERIC_COLS = [
     "Age",

@@ -1,4 +1,5 @@
 const fs = require("fs");
+const readline = require("readline");
 const dotenv = require("dotenv");
 
 if (fs.existsSync(".env")) {
@@ -9,6 +10,7 @@ if (fs.existsSync(".env")) {
 
 const express = require("express");
 const Holidays = require("date-holidays");
+const path = require("path");
 
 const app = express();
 const preferredPort = Number(process.env.PORT || 3001);
@@ -30,6 +32,483 @@ const GEMINI_MODEL = String(
   process.env.GEMINI_MODEL || process.env.MODEL_NAME || "gemini-2.5-flash",
 ).replace(/^models\//, "");
 const CWA_API_KEY = process.env.CWA_WEATHER_API_KEY;
+
+const RECSYS_CSV_CANDIDATES = [
+  path.join(__dirname, "relation_product_RZSHERLBqjPGOUFO01RYew==.csv"),
+  path.join(__dirname, "relation_product.csv"),
+  path.join(__dirname, "bundle_recommendation.csv"),
+  path.join(__dirname, "artifacts", "bundle_recommendation.csv"),
+];
+
+const BUNDLE_CSV_CANDIDATES = [
+  path.join(__dirname, "bundle_recommendation.csv"),
+  path.join(__dirname, "artifacts", "bundle_recommendation.csv"),
+];
+
+let cachedRecsysCatalog = null;
+let cachedBundleCatalog = null;
+let cachedBundleCatalogPromise = null;
+let cachedHorizontalRows = null;
+let cachedVerticalRows = null;
+let cachedVerticalRowsPromise = null;
+let cachedPriceRows = null;
+let cachedRelationProductData = null;
+
+function parseCsvLine(line) {
+  const values = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+
+    if (inQuotes) {
+      if (char === '"') {
+        const nextChar = line[index + 1];
+        if (nextChar === '"') {
+          current += '"';
+          index += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = true;
+      continue;
+    }
+
+    if (char === ",") {
+      values.push(current);
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  values.push(current);
+  return values.map((value) => value.trim());
+}
+
+function parseCsvText(text) {
+  const normalized = String(text || "")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+
+  const lines = normalized.split("\n").filter((line) => line.trim() !== "");
+  if (!lines.length) return [];
+
+  const headers = parseCsvLine(lines[0]);
+  return lines.slice(1).map((line) => {
+    const values = parseCsvLine(line);
+    const row = {};
+
+    headers.forEach((header, index) => {
+      row[header] = values[index] ?? "";
+    });
+
+    return row;
+  });
+}
+
+function toFiniteNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function findFirstExistingPath(candidates) {
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+function loadRelationTitleLookup() {
+  const relationPath = findFirstExistingPath([
+    path.join(__dirname, "relation_product_RZSHERLBqjPGOUFO01RYew==.csv"),
+    path.join(__dirname, "relation_product.csv"),
+  ]);
+
+  if (!relationPath) {
+    return new Map();
+  }
+
+  const rows = parseCsvText(fs.readFileSync(relationPath, "utf8"));
+  const titleLookup = new Map();
+
+  for (const row of rows) {
+    const targetId = String(
+      row.target_product_id || row.MainProduct || "",
+    ).trim();
+    const targetTitle = String(
+      row.target_title || row.MainProduct || targetId,
+    ).trim();
+    const bundleId = String(
+      row.complementary_product_id || row.RelatedProduct || "",
+    ).trim();
+    const bundleTitle = String(
+      row.complementary_title || row.RelatedProduct || bundleId,
+    ).trim();
+
+    if (targetId && targetTitle && !titleLookup.has(targetId)) {
+      titleLookup.set(targetId, targetTitle);
+    }
+    if (bundleId && bundleTitle && !titleLookup.has(bundleId)) {
+      titleLookup.set(bundleId, bundleTitle);
+    }
+  }
+
+  return titleLookup;
+}
+
+async function loadBundleCatalog() {
+  if (cachedBundleCatalog) {
+    return cachedBundleCatalog;
+  }
+
+  if (cachedBundleCatalogPromise) {
+    return cachedBundleCatalogPromise;
+  }
+
+  cachedBundleCatalogPromise = (async () => {
+    const csvPath = findFirstExistingPath(BUNDLE_CSV_CANDIDATES);
+    if (!csvPath) {
+      throw new Error("No bundle_recommendation csv found");
+    }
+
+    const titleLookup = loadRelationTitleLookup();
+
+    const stream = fs.createReadStream(csvPath, { encoding: "utf8" });
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+
+    let headers = null;
+    const mainProductMap = new Map();
+    let totalRows = 0;
+
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+
+      if (!headers) {
+        headers = parseCsvLine(line);
+        continue;
+      }
+
+      const values = parseCsvLine(line);
+      const row = {};
+      headers.forEach((header, index) => {
+        row[header] = values[index] ?? "";
+      });
+
+      const mainProductId = String(
+        row.MainProduct || row.main_product || "",
+      ).trim();
+      const bundleProductId = String(
+        row.BundleProduct || row.bundle_product || "",
+      ).trim();
+      if (!mainProductId || !bundleProductId) continue;
+
+      totalRows += 1;
+      const score =
+        toFiniteNumber(row.RecommendationScore ?? row.score ?? row.Score) ?? 0;
+      const lift =
+        toFiniteNumber(row.Lift ?? row.lift ?? row.lift_score) ?? null;
+      const confidence =
+        toFiniteNumber(row.Confidence ?? row.confidence) ?? null;
+      const mainProductTitle = titleLookup.get(mainProductId) || mainProductId;
+      const bundleProductTitle =
+        titleLookup.get(bundleProductId) || bundleProductId;
+
+      const current = mainProductMap.get(mainProductId);
+      if (!current || score > current.bestScore) {
+        mainProductMap.set(mainProductId, {
+          title: mainProductTitle,
+          productId: mainProductId,
+          relationCount: current ? current.relationCount + 1 : 1,
+          bestComplement: {
+            title: bundleProductTitle,
+            productId: bundleProductId,
+            salePageId: "",
+            score,
+            confidence,
+            lift,
+            support: null,
+            direction: "bundle",
+          },
+          bestScore: score,
+        });
+      } else {
+        current.relationCount += 1;
+      }
+    }
+
+    const products = Array.from(mainProductMap.values())
+      .map((entry) => ({
+        title: entry.title,
+        productId: entry.productId,
+        salePageId: "",
+        relationCount: entry.relationCount,
+        bestComplement: entry.bestComplement,
+      }))
+      .sort((a, b) => a.title.localeCompare(b.title, "zh-Hant-TW"));
+
+    cachedBundleCatalog = {
+      sourceFile: path.basename(csvPath),
+      totalRows,
+      totalMainProducts: products.length,
+      products,
+    };
+
+    return cachedBundleCatalog;
+  })();
+
+  try {
+    const catalog = await cachedBundleCatalogPromise;
+    return catalog;
+  } finally {
+    cachedBundleCatalogPromise = null;
+  }
+}
+
+async function loadHesitationData() {
+  if (!cachedHorizontalRows) {
+    const p = path.join(__dirname, "horizontal_hesitation_users_shop.csv");
+    cachedHorizontalRows = fs.existsSync(p)
+      ? parseCsvText(fs.readFileSync(p, "utf8"))
+      : [];
+  }
+
+  if (!cachedVerticalRows) {
+    if (cachedVerticalRowsPromise) {
+      cachedVerticalRows = await cachedVerticalRowsPromise;
+    } else {
+      cachedVerticalRowsPromise = (async () => {
+        const p = path.join(__dirname, "vertical_hesitation_users_shop.csv");
+        if (!fs.existsSync(p)) return [];
+
+        const stream = fs.createReadStream(p, { encoding: "utf8" });
+        const rl = readline.createInterface({
+          input: stream,
+          crlfDelay: Infinity,
+        });
+
+        let headers = null;
+        const rows = [];
+
+        for await (const line of rl) {
+          if (!line.trim()) continue;
+          if (!headers) {
+            headers = parseCsvLine(line);
+            continue;
+          }
+          const values = parseCsvLine(line);
+          const row = {};
+          headers.forEach((header, idx) => {
+            row[header] = values[idx] ?? "";
+          });
+          rows.push(row);
+        }
+
+        return rows;
+      })();
+
+      cachedVerticalRows = await cachedVerticalRowsPromise;
+      cachedVerticalRowsPromise = null;
+    }
+  }
+
+  if (!cachedPriceRows) {
+    const p = path.join(__dirname, "purchase_hesitation.csv");
+    cachedPriceRows = fs.existsSync(p)
+      ? parseCsvText(fs.readFileSync(p, "utf8"))
+      : [];
+  }
+
+  return { horizontal: cachedHorizontalRows, vertical: cachedVerticalRows, price: cachedPriceRows };
+}
+
+function loadRelationProductData() {
+  if (cachedRelationProductData) return cachedRelationProductData;
+
+  const csvPath = path.join(
+    __dirname,
+    "relation_product_RZSHERLBqjPGOUFO01RYew==.csv",
+  );
+  if (!fs.existsSync(csvPath)) {
+    cachedRelationProductData = { salePageMap: new Map() };
+    return cachedRelationProductData;
+  }
+
+  const rows = parseCsvText(fs.readFileSync(csvPath, "utf8"));
+  const salePageMap = new Map();
+  const priceByProductId = new Map();
+
+  for (const row of rows) {
+    const targetSalePageId = String(row.target_salepage_id || "").trim();
+    const targetProductId = String(row.target_product_id || "").trim();
+    const targetTitle = String(row.target_title || "").trim();
+    const complementProductId = String(
+      row.complementary_product_id || "",
+    ).trim();
+    const complementTitle = String(row.complementary_title || "").trim();
+    const complementSalePageId = String(
+      row.complementary_salepage_id || "",
+    ).trim();
+    const score = toFiniteNumber(row.score) ?? 0;
+    const confidence = toFiniteNumber(row.confidence) ?? null;
+    const lift = toFiniteNumber(row.lift) ?? null;
+    const targetPrice = toFiniteNumber(row.target_price) ?? null;
+    const complementPrice = toFiniteNumber(row.complementary_price) ?? null;
+
+    if (targetProductId && targetPrice != null && !priceByProductId.has(targetProductId)) {
+      priceByProductId.set(targetProductId, targetPrice);
+    }
+    if (complementProductId && complementPrice != null && !priceByProductId.has(complementProductId)) {
+      priceByProductId.set(complementProductId, complementPrice);
+    }
+
+    if (!targetTitle || !complementTitle || !targetSalePageId) continue;
+
+    if (!salePageMap.has(targetSalePageId)) {
+      salePageMap.set(targetSalePageId, {
+        title: targetTitle,
+        productId: targetProductId,
+        price: targetPrice,
+        complements: [],
+      });
+    }
+    salePageMap.get(targetSalePageId).complements.push({
+      title: complementTitle,
+      productId: complementProductId,
+      salePageId: complementSalePageId,
+      price: complementPrice,
+      score,
+      confidence,
+      lift,
+    });
+  }
+
+  for (const entry of salePageMap.values()) {
+    entry.complements.sort(
+      (a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity),
+    );
+  }
+
+  cachedRelationProductData = { salePageMap, priceByProductId };
+  return cachedRelationProductData;
+}
+
+function buildRecsysCatalog() {
+  if (cachedRecsysCatalog) {
+    return cachedRecsysCatalog;
+  }
+
+  const csvPath = RECSYS_CSV_CANDIDATES.find((candidate) =>
+    fs.existsSync(candidate),
+  );
+  if (!csvPath) {
+    throw new Error("No recsys relation csv found");
+  }
+
+  const rows = parseCsvText(fs.readFileSync(csvPath, "utf8"));
+  const productMap = new Map();
+
+  for (const row of rows) {
+    const mainProductId =
+      row.target_product_id || row.MainProduct || row.ProductId || "";
+    const mainProductTitle =
+      row.target_title || row.MainProduct || mainProductId;
+    const complementaryProductId =
+      row.complementary_product_id ||
+      row.BundleProduct ||
+      row.RelatedProduct ||
+      "";
+    const complementaryTitle =
+      row.complementary_title ||
+      row.BundleProduct ||
+      row.RelatedProduct ||
+      complementaryProductId;
+    const score =
+      toFiniteNumber(row.score ?? row.RecommendationScore ?? row.Score) ?? 0;
+    const confidence = toFiniteNumber(row.confidence ?? row.Confidence) ?? null;
+    const lift = toFiniteNumber(row.lift ?? row.Lift) ?? null;
+    const support = toFiniteNumber(row.support ?? row.Support) ?? null;
+
+    if (!mainProductTitle || !complementaryTitle) {
+      continue;
+    }
+
+    const key = mainProductId || mainProductTitle;
+    if (!productMap.has(key)) {
+      productMap.set(key, {
+        mainProductId,
+        mainProductTitle,
+        complements: [],
+      });
+    }
+
+    const entry = productMap.get(key);
+    entry.mainProductId = entry.mainProductId || mainProductId;
+    entry.mainProductTitle = entry.mainProductTitle || mainProductTitle;
+    entry.complements.push({
+      complementaryProductId,
+      complementaryTitle,
+      score,
+      confidence,
+      lift,
+      support,
+    });
+  }
+
+  const products = Array.from(productMap.values())
+    .map((entry) => {
+      const complements = entry.complements
+        .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity))
+        .filter(
+          (item, index, array) =>
+            index ===
+            array.findIndex(
+              (candidate) =>
+                candidate.complementaryTitle === item.complementaryTitle &&
+                candidate.complementaryProductId ===
+                  item.complementaryProductId,
+            ),
+        );
+
+      const bestComplement = complements[0]
+        ? {
+            title: complements[0].complementaryTitle,
+            productId: complements[0].complementaryProductId,
+            salePageId: complements[0].complementarySalePageId,
+            score: complements[0].score,
+            confidence: complements[0].confidence,
+            lift: complements[0].lift,
+            support: complements[0].support,
+            direction: "outgoing",
+          }
+        : null;
+
+      return {
+        title: entry.mainProductTitle,
+        productId: entry.mainProductId,
+        salePageId: entry.salePageId || "",
+        relationCount: complements.length,
+        bestComplement,
+        complements,
+      };
+    })
+    .sort((a, b) => a.title.localeCompare(b.title, "zh-Hant-TW"));
+
+  cachedRecsysCatalog = {
+    sourceFile: path.basename(csvPath),
+    totalMainProducts: products.length,
+    products,
+  };
+
+  return cachedRecsysCatalog;
+}
 
 function safeRoundNumber(value) {
   const num = Number(value);
@@ -628,6 +1107,182 @@ function formatEarthquakeContext(earthquake) {
   ]);
 }
 
+app.get("/api/recsys-products", (req, res) => {
+  loadBundleCatalog()
+    .then((catalog) => res.json(catalog))
+    .catch((err) => {
+      console.error(err);
+      return res
+        .status(500)
+        .json({ error: "server error", details: err.message });
+    });
+});
+
+app.post("/api/user-products", async (req, res) => {
+  try {
+    const { shopMemberId } = req.body || {};
+    if (!shopMemberId) {
+      return res.status(400).json({ error: "missing shopMemberId" });
+    }
+
+    const [{ horizontal, vertical, price: priceRows }, bundleCatalog] = await Promise.all([
+      loadHesitationData(),
+      loadBundleCatalog(),
+    ]);
+
+    const horizontalUserRows = horizontal.filter(
+      (row) => row.ShopMemberId === shopMemberId,
+    );
+    const verticalUserRows = vertical.filter(
+      (row) => row.ShopMemberId === shopMemberId,
+    );
+    const priceUserRows = priceRows.filter(
+      (row) => row.ShopMemberId === shopMemberId,
+    );
+
+    let hesitationType = null;
+    let hesitationSalePageIds = [];
+
+    if (horizontalUserRows.length > 0) {
+      hesitationType = "款式猶豫";
+      const allIds = new Set();
+      for (const row of horizontalUserRows) {
+        String(row.hesitation_salepage_ids || "")
+          .split("|")
+          .map((id) => id.trim())
+          .filter(Boolean)
+          .forEach((id) => allIds.add(id));
+      }
+      hesitationSalePageIds = Array.from(allIds);
+    } else if (priceUserRows.length > 0) {
+      hesitationType = "價格猶豫";
+      const allIds = new Set();
+      for (const row of priceUserRows) {
+        // SalePageId is stored as float string e.g. "7923130.0" — normalize to integer
+        const rawId = String(row.SalePageId || "").trim();
+        const id = rawId.replace(/\.0+$/, "");
+        if (id) allIds.add(id);
+      }
+      hesitationSalePageIds = Array.from(allIds);
+    } else if (verticalUserRows.length > 0) {
+      hesitationType = "規格猶豫";
+      const allIds = new Set();
+      for (const row of verticalUserRows) {
+        const id = String(row.SalePageId || "").trim();
+        if (id) allIds.add(id);
+      }
+      hesitationSalePageIds = Array.from(allIds);
+    } else {
+      return res.json({
+        found: false,
+        hesitationType: null,
+        hesitationSalePageIds: [],
+        products: [],
+      });
+    }
+
+    const { salePageMap, priceByProductId } = loadRelationProductData();
+
+    // Build productId → bestComplement from the already-streamed bundle catalog
+    const bundleComplementMap = new Map();
+    for (const product of bundleCatalog.products) {
+      if (product.productId && product.bestComplement) {
+        bundleComplementMap.set(product.productId, product.bestComplement);
+      }
+    }
+
+    const seen = new Set();
+    const products = [];
+
+    for (const salePageId of hesitationSalePageIds) {
+      const entry = salePageMap.get(salePageId);
+      if (!entry || seen.has(entry.title)) continue;
+      seen.add(entry.title);
+
+      let bestComplement = null;
+      if (entry.productId && bundleComplementMap.has(entry.productId)) {
+        const bc = bundleComplementMap.get(entry.productId);
+        const complementPrice =
+          bc.price ?? priceByProductId.get(bc.productId) ?? null;
+        bestComplement = { ...bc, price: complementPrice };
+      } else if (entry.complements.length > 0) {
+        const c = entry.complements[0];
+        bestComplement = {
+          title: c.title,
+          productId: c.productId,
+          salePageId: c.salePageId,
+          price: c.price ?? priceByProductId.get(c.productId) ?? null,
+          score: c.score,
+          confidence: c.confidence,
+          lift: c.lift,
+        };
+      }
+
+      const productPrice = entry.price ?? priceByProductId.get(entry.productId) ?? null;
+
+      products.push({
+        title: entry.title,
+        productId: entry.productId,
+        salePageId,
+        price: productPrice,
+        relationCount: entry.complements.length,
+        bestComplement,
+      });
+    }
+
+    // Fallback: when no hesitation products mapped to relation_product,
+    // default to the global top-1 pair (highest score) from relation_product.
+    let usedFallback = false;
+    let finalProducts = products;
+    if (products.length === 0) {
+      usedFallback = true;
+      let topSalePageId = null;
+      let topScore = -Infinity;
+      for (const [spid, entry] of salePageMap.entries()) {
+        if (entry.complements.length > 0 && entry.complements[0].score > topScore) {
+          topScore = entry.complements[0].score;
+          topSalePageId = spid;
+        }
+      }
+      if (topSalePageId) {
+        const entry = salePageMap.get(topSalePageId);
+        const c = entry.complements[0];
+        finalProducts = [{
+          title: entry.title,
+          productId: entry.productId,
+          salePageId: topSalePageId,
+          price: entry.price ?? priceByProductId.get(entry.productId) ?? null,
+          relationCount: entry.complements.length,
+          bestComplement: {
+            title: c.title,
+            productId: c.productId,
+            salePageId: c.salePageId,
+            price: c.price ?? priceByProductId.get(c.productId) ?? null,
+            score: c.score,
+            confidence: c.confidence,
+            lift: c.lift,
+          },
+        }];
+      } else {
+        finalProducts = [];
+      }
+    }
+
+    return res.json({
+      found: true,
+      hesitationType,
+      hesitationSalePageIds,
+      usedFallback,
+      products: finalProducts,
+    });
+  } catch (err) {
+    console.error(err);
+    return res
+      .status(500)
+      .json({ error: "server error", details: err.message });
+  }
+});
+
 app.post("/api/context", async (req, res) => {
   try {
     const { userData } = req.body || {};
@@ -743,6 +1398,7 @@ app.post("/api/generate", async (req, res) => {
       weather: clientWeather,
       festival: clientFestival,
       userData,
+      productSelection,
       selectedContextKeys = [],
       contextData,
     } = req.body || {};
@@ -779,15 +1435,51 @@ app.post("/api/generate", async (req, res) => {
       ? selectedContextLines.join("\n")
       : `現在天氣: ${weatherSummary || clientWeather || "天氣資訊未知"}\n節慶/活動（30 天內）: ${holidayInfo?.summaryText || clientFestival || "30 天內無節慶"}\n重大自然災害/警報: ${disasterInfo?.summaryText || "目前無明顯地震或氣候警報"}`;
 
-    const productInfo = userData
-      ? `主商品: ${userData.mainProduct} (NT$${userData.mainPrice}), 互補品: ${userData.recProduct} (NT$${userData.recPrice})`
-      : "";
+    const selectedMainProduct =
+      productSelection?.mainProductTitle ||
+      productSelection?.main?.title ||
+      productSelection?.title ||
+      userData?.mainProduct ||
+      "";
+    const selectedComplementaryProduct =
+      productSelection?.bestComplement?.title ||
+      productSelection?.complementary?.title ||
+      userData?.recProduct ||
+      "";
+    const selectedRelationScore =
+      productSelection?.bestComplement?.score ??
+      userData?.relationScore ??
+      null;
+    const selectedConfidence =
+      productSelection?.bestComplement?.confidence ??
+      userData?.confidence ??
+      null;
+    const selectedLift =
+      productSelection?.bestComplement?.lift ?? userData?.lift ?? null;
+
+    const productInfoLines = [];
+    if (selectedMainProduct) {
+      productInfoLines.push(`主商品: ${selectedMainProduct}`);
+    }
+    if (selectedComplementaryProduct) {
+      productInfoLines.push(`互補品: ${selectedComplementaryProduct}`);
+    }
+    if (selectedRelationScore != null) {
+      productInfoLines.push(`關聯分數: ${selectedRelationScore}`);
+    }
+    if (selectedConfidence != null) {
+      productInfoLines.push(`信賴度: ${selectedConfidence}`);
+    }
+    if (selectedLift != null) {
+      productInfoLines.push(`提升度: ${selectedLift}`);
+    }
+    const productInfo = productInfoLines.join("\n");
     const userLabel = userData?.intentLabel
       ? `使用者意圖: ${userData.intentLabel}`
       : "";
     const user = buildUserPersonaPrompt(userData);
 
-    const prompt = `你是一位電商line訊息文案撰寫員，要簡短文案。根據外部資訊(不用在乎縣市)，輸出最終文案，不要解釋、不要標題、不要角色說明。\n\n需求：針對使用者的猶豫點，語氣真誠、生活化，提到主商品與互補品。\n\n商品資訊：${productInfo}\n${userLabel}\n${user}\n外部資訊:\n${selectedContextText}`;
+    const prompt = `你是一位電商line訊息文案撰寫員，要簡短文案。根據外部資訊(不用在乎縣市)，輸出最終文案，不要解釋、不要標題、不要角色說明。\n\n需求：針對使用者的猶豫點，語氣真誠、生活化，提到主商品與互補品。\n\n商品資訊：\n${productInfo}\n${userLabel}\n${user}\n外部資訊:\n${selectedContextText}`;
     let text = await generateGeminiCopy(prompt);
 
     return res.json({

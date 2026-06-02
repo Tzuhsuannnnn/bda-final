@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-from recsys_common import DEFAULT_TEXT_EMB_DIM, detect_shop_id, load_metadata, load_orders
-from recsys_model import TwoTowerModel
+from python_models.recsys_common import DEFAULT_TEXT_EMB_DIM, detect_shop_id, load_metadata, load_orders
+from python_models.recsys_model import TwoTowerModel
 
 
 def parse_args() -> argparse.Namespace:
