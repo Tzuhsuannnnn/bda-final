@@ -51,6 +51,7 @@ let cachedBundleCatalogPromise = null;
 let cachedHorizontalRows = null;
 let cachedVerticalRows = null;
 let cachedVerticalRowsPromise = null;
+let cachedPriceRows = null;
 let cachedRelationProductData = null;
 
 function parseCsvLine(line) {
@@ -318,7 +319,14 @@ async function loadHesitationData() {
     }
   }
 
-  return { horizontal: cachedHorizontalRows, vertical: cachedVerticalRows };
+  if (!cachedPriceRows) {
+    const p = path.join(__dirname, "purchase_hesitation.csv");
+    cachedPriceRows = fs.existsSync(p)
+      ? parseCsvText(fs.readFileSync(p, "utf8"))
+      : [];
+  }
+
+  return { horizontal: cachedHorizontalRows, vertical: cachedVerticalRows, price: cachedPriceRows };
 }
 
 function loadRelationProductData() {
@@ -335,6 +343,7 @@ function loadRelationProductData() {
 
   const rows = parseCsvText(fs.readFileSync(csvPath, "utf8"));
   const salePageMap = new Map();
+  const priceByProductId = new Map();
 
   for (const row of rows) {
     const targetSalePageId = String(row.target_salepage_id || "").trim();
@@ -350,6 +359,15 @@ function loadRelationProductData() {
     const score = toFiniteNumber(row.score) ?? 0;
     const confidence = toFiniteNumber(row.confidence) ?? null;
     const lift = toFiniteNumber(row.lift) ?? null;
+    const targetPrice = toFiniteNumber(row.target_price) ?? null;
+    const complementPrice = toFiniteNumber(row.complementary_price) ?? null;
+
+    if (targetProductId && targetPrice != null && !priceByProductId.has(targetProductId)) {
+      priceByProductId.set(targetProductId, targetPrice);
+    }
+    if (complementProductId && complementPrice != null && !priceByProductId.has(complementProductId)) {
+      priceByProductId.set(complementProductId, complementPrice);
+    }
 
     if (!targetTitle || !complementTitle || !targetSalePageId) continue;
 
@@ -357,6 +375,7 @@ function loadRelationProductData() {
       salePageMap.set(targetSalePageId, {
         title: targetTitle,
         productId: targetProductId,
+        price: targetPrice,
         complements: [],
       });
     }
@@ -364,6 +383,7 @@ function loadRelationProductData() {
       title: complementTitle,
       productId: complementProductId,
       salePageId: complementSalePageId,
+      price: complementPrice,
       score,
       confidence,
       lift,
@@ -376,7 +396,7 @@ function loadRelationProductData() {
     );
   }
 
-  cachedRelationProductData = { salePageMap };
+  cachedRelationProductData = { salePageMap, priceByProductId };
   return cachedRelationProductData;
 }
 
@@ -1105,7 +1125,7 @@ app.post("/api/user-products", async (req, res) => {
       return res.status(400).json({ error: "missing shopMemberId" });
     }
 
-    const [{ horizontal, vertical }, bundleCatalog] = await Promise.all([
+    const [{ horizontal, vertical, price: priceRows }, bundleCatalog] = await Promise.all([
       loadHesitationData(),
       loadBundleCatalog(),
     ]);
@@ -1114,6 +1134,9 @@ app.post("/api/user-products", async (req, res) => {
       (row) => row.ShopMemberId === shopMemberId,
     );
     const verticalUserRows = vertical.filter(
+      (row) => row.ShopMemberId === shopMemberId,
+    );
+    const priceUserRows = priceRows.filter(
       (row) => row.ShopMemberId === shopMemberId,
     );
 
@@ -1129,6 +1152,16 @@ app.post("/api/user-products", async (req, res) => {
           .map((id) => id.trim())
           .filter(Boolean)
           .forEach((id) => allIds.add(id));
+      }
+      hesitationSalePageIds = Array.from(allIds);
+    } else if (priceUserRows.length > 0) {
+      hesitationType = "價格猶豫";
+      const allIds = new Set();
+      for (const row of priceUserRows) {
+        // SalePageId is stored as float string e.g. "7923130.0" — normalize to integer
+        const rawId = String(row.SalePageId || "").trim();
+        const id = rawId.replace(/\.0+$/, "");
+        if (id) allIds.add(id);
       }
       hesitationSalePageIds = Array.from(allIds);
     } else if (verticalUserRows.length > 0) {
@@ -1148,7 +1181,7 @@ app.post("/api/user-products", async (req, res) => {
       });
     }
 
-    const { salePageMap } = loadRelationProductData();
+    const { salePageMap, priceByProductId } = loadRelationProductData();
 
     // Build productId → bestComplement from the already-streamed bundle catalog
     const bundleComplementMap = new Map();
@@ -1168,38 +1201,71 @@ app.post("/api/user-products", async (req, res) => {
 
       let bestComplement = null;
       if (entry.productId && bundleComplementMap.has(entry.productId)) {
-        bestComplement = bundleComplementMap.get(entry.productId);
+        const bc = bundleComplementMap.get(entry.productId);
+        const complementPrice =
+          bc.price ?? priceByProductId.get(bc.productId) ?? null;
+        bestComplement = { ...bc, price: complementPrice };
       } else if (entry.complements.length > 0) {
         const c = entry.complements[0];
         bestComplement = {
           title: c.title,
           productId: c.productId,
           salePageId: c.salePageId,
+          price: c.price ?? priceByProductId.get(c.productId) ?? null,
           score: c.score,
           confidence: c.confidence,
           lift: c.lift,
         };
       }
 
+      const productPrice = entry.price ?? priceByProductId.get(entry.productId) ?? null;
+
       products.push({
         title: entry.title,
         productId: entry.productId,
         salePageId,
+        price: productPrice,
         relationCount: entry.complements.length,
         bestComplement,
       });
     }
 
     // Fallback: when no hesitation products mapped to relation_product,
-    // use the global bundle catalog (already cached, titles resolved).
-    // Filter out entries whose title is still the raw hash ID (no title found).
+    // default to the global top-1 pair (highest score) from relation_product.
     let usedFallback = false;
     let finalProducts = products;
     if (products.length === 0) {
       usedFallback = true;
-      finalProducts = bundleCatalog.products.filter(
-        (p) => p.title && p.title !== p.productId && !p.title.endsWith("=="),
-      );
+      let topSalePageId = null;
+      let topScore = -Infinity;
+      for (const [spid, entry] of salePageMap.entries()) {
+        if (entry.complements.length > 0 && entry.complements[0].score > topScore) {
+          topScore = entry.complements[0].score;
+          topSalePageId = spid;
+        }
+      }
+      if (topSalePageId) {
+        const entry = salePageMap.get(topSalePageId);
+        const c = entry.complements[0];
+        finalProducts = [{
+          title: entry.title,
+          productId: entry.productId,
+          salePageId: topSalePageId,
+          price: entry.price ?? priceByProductId.get(entry.productId) ?? null,
+          relationCount: entry.complements.length,
+          bestComplement: {
+            title: c.title,
+            productId: c.productId,
+            salePageId: c.salePageId,
+            price: c.price ?? priceByProductId.get(c.productId) ?? null,
+            score: c.score,
+            confidence: c.confidence,
+            lift: c.lift,
+          },
+        }];
+      } else {
+        finalProducts = [];
+      }
     }
 
     return res.json({

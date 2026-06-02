@@ -51,12 +51,8 @@
       <section class="lg:col-span-1 space-y-6">
         <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
           <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center">
-            <i class="fa-solid fa-user-tag text-blue-500 mr-2"></i> 1.
-            輸入測試會員
+            <i class="fa-solid fa-user-tag text-blue-500 mr-2"></i> 1. 輸入會員
           </h2>
-          <label class="block text-sm font-medium text-gray-600 mb-2"
-            >輸入 ShopMemberId 查詢猶豫類型與商品：</label
-          >
           <div class="flex gap-2">
             <input
               id="memberIdInput"
@@ -110,24 +106,13 @@
           <div class="space-y-4 text-sm">
             <div>
               <label class="block text-sm font-medium text-gray-600 mb-2"
-                >從查詢到的猶豫商品中選擇主商品，系統自動帶出互補品：</label
+                >從本user猶豫商品中選擇主商品，系統將自動帶出互補品：</label
               >
-              <input
-                id="mainProductSearch"
-                list="mainProductOptions"
-                oninput="handleProductSearchInput()"
-                onchange="resolveProductSelection()"
-                onkeydown="handleProductSearchKeydown(event)"
-                placeholder="開始輸入主商品名稱，例如：熱療撫紋導入儀"
-                class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
-              />
+
               <datalist id="mainProductOptions"></datalist>
             </div>
 
             <div>
-              <label class="block text-sm font-medium text-gray-600 mb-2"
-                >或直接從下拉選單挑選：</label
-              >
               <select
                 id="mainProductSelect"
                 onchange="selectProductByTitle(this.value)"
@@ -142,13 +127,6 @@
               class="grid grid-cols-1 gap-2"
             ></div>
 
-            <div
-              id="productSelectionStatus"
-              class="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3 text-xs text-gray-500"
-            >
-              請先在上方輸入並查詢 ShopMemberId，商品清單將自動更新。
-            </div>
-
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div class="bg-indigo-50 p-3 rounded-xl">
                 <span
@@ -159,24 +137,30 @@
                   >尚未選擇</span
                 >
                 <span
+                  id="mainProductPrice"
+                  class="block text-sm font-semibold text-indigo-700 mt-0.5"
+                ></span>
+                <span
                   id="mainProductMeta"
                   class="block text-xs text-gray-500 mt-0.5"
-                  >請輸入關鍵字搜尋。</span
-                >
+                ></span>
               </div>
               <div class="bg-amber-50 p-3 rounded-xl">
                 <span
                   class="block text-xs font-semibold text-amber-600 uppercase"
-                  >自動帶出的互補品</span
+                  >互補品</span
                 >
                 <span id="recProduct" class="font-bold text-gray-800"
                   >尚未選擇</span
                 >
                 <span
+                  id="recProductPrice"
+                  class="block text-sm font-semibold text-amber-700 mt-0.5"
+                ></span>
+                <span
                   id="recProductMeta"
                   class="block text-xs text-gray-500 mt-0.5"
-                  >選到主商品後會自動更新。</span
-                >
+                ></span>
               </div>
             </div>
 
@@ -590,9 +574,12 @@
                 onclick="selectProductByTitle(${JSON.stringify(product.title)})"
                 class="text-left rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-indigo-400 hover:bg-indigo-50"
               >
-                <div class="text-sm font-medium text-gray-800">${escapeHtml(product.title)}</div>
+                <div class="flex items-baseline justify-between">
+                  <div class="text-sm font-medium text-gray-800">${escapeHtml(product.title)}</div>
+                  ${product.price != null ? `<div class="text-xs font-semibold text-indigo-600 ml-2 shrink-0">${formatPrice(product.price)}</div>` : ""}
+                </div>
                 <div class="mt-1 text-xs text-gray-500">
-                  ${bestComplement ? `推薦互補品：${escapeHtml(bestComplement.title)} ｜ 分數 ${formatProductMetric(bestComplement.score)}` : "目前沒有推薦互補品"}
+                  ${bestComplement ? `互補品：${escapeHtml(bestComplement.title)}${bestComplement.price != null ? ` (${formatPrice(bestComplement.price)})` : ""} ｜ 分數 ${formatProductMetric(bestComplement.score)}` : "目前沒有推薦互補品"}
                 </div>
               </button>
             `;
@@ -636,12 +623,19 @@
         resolveProductSelection();
       }
 
+      function formatPrice(price) {
+        if (price == null || !Number.isFinite(Number(price))) return null;
+        return `NT$ ${Number(price).toLocaleString("zh-TW")}`;
+      }
+
       function updateProductSelectionDisplay(selection) {
         const statusEl = document.getElementById("productSelectionStatus");
         const mainProductEl = document.getElementById("mainProduct");
         const mainProductMetaEl = document.getElementById("mainProductMeta");
+        const mainProductPriceEl = document.getElementById("mainProductPrice");
         const recProductEl = document.getElementById("recProduct");
         const recProductMetaEl = document.getElementById("recProductMeta");
+        const recProductPriceEl = document.getElementById("recProductPrice");
         const relationScoreEl = document.getElementById("relationScore");
         const relationConfidenceEl =
           document.getElementById("relationConfidence");
@@ -653,9 +647,11 @@
               "請輸入主商品名稱，系統會從真實 recsys 關聯表中找出互補品。";
           }
           setTextContent("mainProduct", "尚未選擇");
-          setTextContent("mainProductMeta", "請輸入關鍵字搜尋。");
+          setTextContent("mainProductMeta", "");
+          if (mainProductPriceEl) mainProductPriceEl.innerText = "";
           setTextContent("recProduct", "尚未選擇");
-          setTextContent("recProductMeta", "選到主商品後會自動更新。");
+          setTextContent("recProductMeta", "");
+          if (recProductPriceEl) recProductPriceEl.innerText = "";
           setTextContent("relationScore", "--");
           setTextContent("relationConfidence", "--");
           setTextContent("relationLift", "--");
@@ -667,21 +663,21 @@
         if (mainProductEl)
           mainProductEl.innerText = selection.title || "尚未選擇";
         if (mainProductMetaEl) {
-          mainProductMetaEl.innerText = selection.productId
-            ? `ProductId: ${selection.productId}`
-            : selection.salePageId
-              ? `SalePageId: ${selection.salePageId}`
-              : `共 ${selection.relationCount || 0} 筆關聯資料`;
+          mainProductMetaEl.innerText = `共 ${selection.relationCount || 0} 筆關聯資料`;
+        }
+        if (mainProductPriceEl) {
+          mainProductPriceEl.innerText = formatPrice(selection.price) || "";
         }
 
         if (bestComplement) {
           if (recProductEl)
             recProductEl.innerText = bestComplement.title || "尚未選擇";
           if (recProductMetaEl) {
-            recProductMetaEl.innerText = [
-              `ProductId: ${bestComplement.productId || "--"}`,
-              `SalePageId: ${bestComplement.salePageId || "--"}`,
-            ].join("｜");
+            recProductMetaEl.innerText = "";
+          }
+          if (recProductPriceEl) {
+            recProductPriceEl.innerText =
+              formatPrice(bestComplement.price) || "";
           }
           if (relationScoreEl)
             relationScoreEl.innerText = formatProductMetric(
@@ -700,6 +696,7 @@
           if (recProductEl) recProductEl.innerText = "目前沒有可用互補品";
           if (recProductMetaEl)
             recProductMetaEl.innerText = "請換一個主商品或重新載入資料。";
+          if (recProductPriceEl) recProductPriceEl.innerText = "";
           if (relationScoreEl) relationScoreEl.innerText = "--";
           if (relationConfidenceEl) relationConfidenceEl.innerText = "--";
           if (relationLiftEl) relationLiftEl.innerText = "--";
