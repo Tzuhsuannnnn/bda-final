@@ -46,8 +46,8 @@ const BUNDLE_CSV_CANDIDATES = [
 ];
 
 let cachedRecsysCatalog = null;
-let cachedBundleCatalog = null;
-let cachedBundleCatalogPromise = null;
+let cachedBundleData = null;
+let cachedBundleDataPromise = null;
 let cachedHorizontalRows = null;
 let cachedVerticalRows = null;
 let cachedVerticalRowsPromise = null;
@@ -164,33 +164,39 @@ function loadRelationTitleLookup() {
   return titleLookup;
 }
 
-async function loadBundleCatalog() {
-  if (cachedBundleCatalog) {
-    return cachedBundleCatalog;
-  }
+// 一次讀取 bundle_recommendation.csv，同時建 catalog（product-level）和 userBundleMap（user-level）
+async function loadBundleData() {
+  if (cachedBundleData) return cachedBundleData;
+  if (cachedBundleDataPromise) return cachedBundleDataPromise;
 
-  if (cachedBundleCatalogPromise) {
-    return cachedBundleCatalogPromise;
-  }
-
-  cachedBundleCatalogPromise = (async () => {
+  cachedBundleDataPromise = (async () => {
     const csvPath = findFirstExistingPath(BUNDLE_CSV_CANDIDATES);
     if (!csvPath) {
-      throw new Error("No bundle_recommendation csv found");
+      return {
+        catalog: {
+          sourceFile: "",
+          totalRows: 0,
+          totalMainProducts: 0,
+          products: [],
+        },
+        userBundleMap: new Map(),
+      };
     }
 
     const titleLookup = loadRelationTitleLookup();
-
     const stream = fs.createReadStream(csvPath, { encoding: "utf8" });
     const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
     let headers = null;
     const mainProductMap = new Map();
+    // userBundleMap: Map<userId, string[]> — 只存 mainProductId，去重，保留插入順序
+    // bundle 詳情在 request 時從 catalog 查，避免每個 user 存大量 object
+    const userBundleMap = new Map();
+    const userSeenProducts = new Map(); // 暫存，用於去重，迴圈結束後釋放
     let totalRows = 0;
 
     for await (const line of rl) {
       if (!line.trim()) continue;
-
       if (!headers) {
         headers = parseCsvLine(line);
         continue;
@@ -198,10 +204,11 @@ async function loadBundleCatalog() {
 
       const values = parseCsvLine(line);
       const row = {};
-      headers.forEach((header, index) => {
-        row[header] = values[index] ?? "";
+      headers.forEach((header, idx) => {
+        row[header] = values[idx] ?? "";
       });
 
+      const userId = String(row.ShopMemberId || "").trim();
       const mainProductId = String(
         row.MainProduct || row.main_product || "",
       ).trim();
@@ -217,18 +224,18 @@ async function loadBundleCatalog() {
         toFiniteNumber(row.Lift ?? row.lift ?? row.lift_score) ?? null;
       const confidence =
         toFiniteNumber(row.Confidence ?? row.confidence) ?? null;
-      const mainProductTitle = titleLookup.get(mainProductId) || mainProductId;
-      const bundleProductTitle =
-        titleLookup.get(bundleProductId) || bundleProductId;
+      const mainTitle = titleLookup.get(mainProductId) || mainProductId;
+      const bundleTitle = titleLookup.get(bundleProductId) || bundleProductId;
 
+      // catalog: product-level，只保留最佳分數的互補品
       const current = mainProductMap.get(mainProductId);
       if (!current || score > current.bestScore) {
         mainProductMap.set(mainProductId, {
-          title: mainProductTitle,
+          title: mainTitle,
           productId: mainProductId,
           relationCount: current ? current.relationCount + 1 : 1,
           bestComplement: {
-            title: bundleProductTitle,
+            title: bundleTitle,
             productId: bundleProductId,
             salePageId: "",
             score,
@@ -242,7 +249,22 @@ async function loadBundleCatalog() {
       } else {
         current.relationCount += 1;
       }
+
+      // userBundleMap: 每個 user 只存 mainProductId 字串陣列（去重）
+      if (userId) {
+        if (!userSeenProducts.has(userId)) {
+          userSeenProducts.set(userId, new Set());
+          userBundleMap.set(userId, []);
+        }
+        const seen = userSeenProducts.get(userId);
+        if (!seen.has(mainProductId)) {
+          seen.add(mainProductId);
+          userBundleMap.get(userId).push(mainProductId);
+        }
+      }
     }
+
+    userSeenProducts.clear(); // 釋放去重暫存
 
     const products = Array.from(mainProductMap.values())
       .map((entry) => ({
@@ -254,22 +276,33 @@ async function loadBundleCatalog() {
       }))
       .sort((a, b) => a.title.localeCompare(b.title, "zh-Hant-TW"));
 
-    cachedBundleCatalog = {
-      sourceFile: path.basename(csvPath),
-      totalRows,
-      totalMainProducts: products.length,
-      products,
+    cachedBundleData = {
+      catalog: {
+        sourceFile: path.basename(csvPath),
+        totalRows,
+        totalMainProducts: products.length,
+        products,
+      },
+      userBundleMap,
     };
 
-    return cachedBundleCatalog;
+    return cachedBundleData;
   })();
 
   try {
-    const catalog = await cachedBundleCatalogPromise;
-    return catalog;
+    const result = await cachedBundleDataPromise;
+    return result;
   } finally {
-    cachedBundleCatalogPromise = null;
+    cachedBundleDataPromise = null;
   }
+}
+
+async function loadBundleCatalog() {
+  return (await loadBundleData()).catalog;
+}
+
+async function loadUserBundleMap() {
+  return (await loadBundleData()).userBundleMap;
 }
 
 async function loadHesitationData() {
@@ -326,7 +359,11 @@ async function loadHesitationData() {
       : [];
   }
 
-  return { horizontal: cachedHorizontalRows, vertical: cachedVerticalRows, price: cachedPriceRows };
+  return {
+    horizontal: cachedHorizontalRows,
+    vertical: cachedVerticalRows,
+    price: cachedPriceRows,
+  };
 }
 
 function loadRelationProductData() {
@@ -362,10 +399,18 @@ function loadRelationProductData() {
     const targetPrice = toFiniteNumber(row.target_price) ?? null;
     const complementPrice = toFiniteNumber(row.complementary_price) ?? null;
 
-    if (targetProductId && targetPrice != null && !priceByProductId.has(targetProductId)) {
+    if (
+      targetProductId &&
+      targetPrice != null &&
+      !priceByProductId.has(targetProductId)
+    ) {
       priceByProductId.set(targetProductId, targetPrice);
     }
-    if (complementProductId && complementPrice != null && !priceByProductId.has(complementProductId)) {
+    if (
+      complementProductId &&
+      complementPrice != null &&
+      !priceByProductId.has(complementProductId)
+    ) {
       priceByProductId.set(complementProductId, complementPrice);
     }
 
@@ -1125,10 +1170,17 @@ app.post("/api/user-products", async (req, res) => {
       return res.status(400).json({ error: "missing shopMemberId" });
     }
 
-    const [{ horizontal, vertical, price: priceRows }, bundleCatalog] = await Promise.all([
-      loadHesitationData(),
-      loadBundleCatalog(),
-    ]);
+    const [
+      { horizontal, vertical, price: priceRows },
+      { catalog, userBundleMap },
+    ] = await Promise.all([loadHesitationData(), loadBundleData()]);
+
+    const { salePageMap, priceByProductId } = loadRelationProductData();
+
+    // catalog product lookup: productId → catalog entry
+    const catalogProductMap = new Map(
+      catalog.products.map((p) => [p.productId, p]),
+    );
 
     const horizontalUserRows = horizontal.filter(
       (row) => row.ShopMemberId === shopMemberId,
@@ -1139,7 +1191,88 @@ app.post("/api/user-products", async (req, res) => {
     const priceUserRows = priceRows.filter(
       (row) => row.ShopMemberId === shopMemberId,
     );
+    const isHesitatingUser =
+      horizontalUserRows.length > 0 ||
+      verticalUserRows.length > 0 ||
+      priceUserRows.length > 0;
 
+    // userBundleMap 只存 mainProductId[]，bundle 詳情從 catalog 查
+    function formatBundleEntry(mainProductId) {
+      const p = catalogProductMap.get(mainProductId);
+      if (!p || !p.bestComplement) return null;
+      return {
+        title: p.title,
+        productId: mainProductId,
+        salePageId: "",
+        price: priceByProductId.get(mainProductId) ?? null,
+        relationCount: p.relationCount,
+        bestComplement: {
+          ...p.bestComplement,
+          price: priceByProductId.get(p.bestComplement.productId) ?? null,
+        },
+      };
+    }
+
+    function buildFallbackProducts() {
+      let topSalePageId = null;
+      let topScore = -Infinity;
+      for (const [spid, entry] of salePageMap.entries()) {
+        if (
+          entry.complements.length > 0 &&
+          entry.complements[0].score > topScore
+        ) {
+          topScore = entry.complements[0].score;
+          topSalePageId = spid;
+        }
+      }
+      if (!topSalePageId) return [];
+      const entry = salePageMap.get(topSalePageId);
+      const c = entry.complements[0];
+      return [
+        {
+          title: entry.title,
+          productId: entry.productId,
+          salePageId: topSalePageId,
+          price: entry.price ?? priceByProductId.get(entry.productId) ?? null,
+          relationCount: entry.complements.length,
+          bestComplement: {
+            title: c.title,
+            productId: c.productId,
+            salePageId: c.salePageId,
+            price: c.price ?? priceByProductId.get(c.productId) ?? null,
+            score: c.score,
+            confidence: c.confidence,
+            lift: c.lift,
+          },
+        },
+      ];
+    }
+
+    // 非猶豫客：直接用 bundle_recommendation 的個人化推薦
+    if (!isHesitatingUser) {
+      const userMainProducts = userBundleMap.get(shopMemberId) || [];
+      const userProducts = userMainProducts
+        .map(formatBundleEntry)
+        .filter(Boolean);
+      if (userProducts.length > 0) {
+        return res.json({
+          found: true,
+          hesitationType: null,
+          hesitationSalePageIds: [],
+          usedFallback: false,
+          products: userProducts,
+        });
+      }
+      return res.json({
+        found: false,
+        hesitationType: null,
+        hesitationSalePageIds: [],
+        usedFallback: true,
+        products: buildFallbackProducts(),
+      });
+    }
+
+    // 猶豫客：先取猶豫商品清單
     let hesitationType = null;
     let hesitationSalePageIds = [];
 
@@ -1158,13 +1291,13 @@ app.post("/api/user-products", async (req, res) => {
       hesitationType = "價格猶豫";
       const allIds = new Set();
       for (const row of priceUserRows) {
-        // SalePageId is stored as float string e.g. "7923130.0" — normalize to integer
-        const rawId = String(row.SalePageId || "").trim();
-        const id = rawId.replace(/\.0+$/, "");
+        const id = String(row.SalePageId || "")
+          .trim()
+          .replace(/\.0+$/, "");
         if (id) allIds.add(id);
       }
       hesitationSalePageIds = Array.from(allIds);
-    } else if (verticalUserRows.length > 0) {
+    } else {
       hesitationType = "規格猶豫";
       const allIds = new Set();
       for (const row of verticalUserRows) {
@@ -1172,42 +1305,50 @@ app.post("/api/user-products", async (req, res) => {
         if (id) allIds.add(id);
       }
       hesitationSalePageIds = Array.from(allIds);
-    } else {
-      return res.json({
-        found: false,
-        hesitationType: null,
-        hesitationSalePageIds: [],
-        products: [],
-      });
     }
 
-    const { salePageMap, priceByProductId } = loadRelationProductData();
+    // Step 1: bundle_recommendation 有此 user，且猶豫商品剛好是該 user 的 MainProduct
+    const hesitationProductIds = new Set(
+      hesitationSalePageIds
+        .map((spid) => salePageMap.get(spid)?.productId)
+        .filter(Boolean),
+    );
+    const userMainProducts = userBundleMap.get(shopMemberId) || [];
+    const matchedProductIds = userMainProducts.filter((pid) =>
+      hesitationProductIds.has(pid),
+    );
 
-    // Build productId → bestComplement from the already-streamed bundle catalog
-    const bundleComplementMap = new Map();
-    for (const product of bundleCatalog.products) {
-      if (product.productId && product.bestComplement) {
-        bundleComplementMap.set(product.productId, product.bestComplement);
+    if (matchedProductIds.length > 0) {
+      const matchedProducts = matchedProductIds
+        .map(formatBundleEntry)
+        .filter(Boolean);
+      if (matchedProducts.length > 0) {
+        return res.json({
+          found: true,
+          hesitationType,
+          hesitationSalePageIds,
+          usedFallback: false,
+          products: matchedProducts,
+        });
       }
     }
 
+    // Step 2: relation_product (FP-Growth) 直接找猶豫商品的互補品
     const seen = new Set();
     const products = [];
-
     for (const salePageId of hesitationSalePageIds) {
       const entry = salePageMap.get(salePageId);
-      if (!entry || seen.has(entry.title)) continue;
+      if (!entry || seen.has(entry.title) || entry.complements.length === 0)
+        continue;
       seen.add(entry.title);
-
-      let bestComplement = null;
-      if (entry.productId && bundleComplementMap.has(entry.productId)) {
-        const bc = bundleComplementMap.get(entry.productId);
-        const complementPrice =
-          bc.price ?? priceByProductId.get(bc.productId) ?? null;
-        bestComplement = { ...bc, price: complementPrice };
-      } else if (entry.complements.length > 0) {
-        const c = entry.complements[0];
-        bestComplement = {
+      const c = entry.complements[0];
+      products.push({
+        title: entry.title,
+        productId: entry.productId,
+        salePageId,
+        price: entry.price ?? priceByProductId.get(entry.productId) ?? null,
+        relationCount: entry.complements.length,
+        bestComplement: {
           title: c.title,
           productId: c.productId,
           salePageId: c.salePageId,
@@ -1215,65 +1356,27 @@ app.post("/api/user-products", async (req, res) => {
           score: c.score,
           confidence: c.confidence,
           lift: c.lift,
-        };
-      }
-
-      const productPrice = entry.price ?? priceByProductId.get(entry.productId) ?? null;
-
-      products.push({
-        title: entry.title,
-        productId: entry.productId,
-        salePageId,
-        price: productPrice,
-        relationCount: entry.complements.length,
-        bestComplement,
+        },
       });
     }
 
-    // Fallback: when no hesitation products mapped to relation_product,
-    // default to the global top-1 pair (highest score) from relation_product.
-    let usedFallback = false;
-    let finalProducts = products;
-    if (products.length === 0) {
-      usedFallback = true;
-      let topSalePageId = null;
-      let topScore = -Infinity;
-      for (const [spid, entry] of salePageMap.entries()) {
-        if (entry.complements.length > 0 && entry.complements[0].score > topScore) {
-          topScore = entry.complements[0].score;
-          topSalePageId = spid;
-        }
-      }
-      if (topSalePageId) {
-        const entry = salePageMap.get(topSalePageId);
-        const c = entry.complements[0];
-        finalProducts = [{
-          title: entry.title,
-          productId: entry.productId,
-          salePageId: topSalePageId,
-          price: entry.price ?? priceByProductId.get(entry.productId) ?? null,
-          relationCount: entry.complements.length,
-          bestComplement: {
-            title: c.title,
-            productId: c.productId,
-            salePageId: c.salePageId,
-            price: c.price ?? priceByProductId.get(c.productId) ?? null,
-            score: c.score,
-            confidence: c.confidence,
-            lift: c.lift,
-          },
-        }];
-      } else {
-        finalProducts = [];
-      }
+    if (products.length > 0) {
+      return res.json({
+        found: true,
+        hesitationType,
+        hesitationSalePageIds,
+        usedFallback: false,
+        products,
+      });
     }
 
+    // Step 3: fallback
     return res.json({
       found: true,
       hesitationType,
       hesitationSalePageIds,
-      usedFallback,
-      products: finalProducts,
+      usedFallback: true,
+      products: buildFallbackProducts(),
     });
   } catch (err) {
     console.error(err);
@@ -1457,12 +1560,32 @@ app.post("/api/generate", async (req, res) => {
     const selectedLift =
       productSelection?.bestComplement?.lift ?? userData?.lift ?? null;
 
+    const intentLabel = userData?.intentLabel || "";
+    const isPriceHesitation = intentLabel === "價格猶豫";
+
+    const selectedMainPrice =
+      productSelection?.price ?? productSelection?.main?.price ?? userData?.mainPrice ?? null;
+    const selectedComplementPrice =
+      productSelection?.bestComplement?.price ??
+      productSelection?.complementary?.price ??
+      userData?.complementPrice ??
+      null;
+
     const productInfoLines = [];
     if (selectedMainProduct) {
-      productInfoLines.push(`主商品: ${selectedMainProduct}`);
+      const priceStr = isPriceHesitation && selectedMainPrice != null
+        ? ` (NT$ ${Number(selectedMainPrice).toLocaleString("zh-TW")})`
+        : "";
+      productInfoLines.push(`主商品: ${selectedMainProduct}${priceStr}`);
     }
     if (selectedComplementaryProduct) {
-      productInfoLines.push(`互補品: ${selectedComplementaryProduct}`);
+      const priceStr = isPriceHesitation && selectedComplementPrice != null
+        ? ` (NT$ ${Number(selectedComplementPrice).toLocaleString("zh-TW")})`
+        : "";
+      productInfoLines.push(`互補品: ${selectedComplementaryProduct}${priceStr}`);
+    }
+    if (isPriceHesitation) {
+      productInfoLines.push(`折扣碼: GROUP18（輸入後可享主商品＋互補品組合 9折優惠）`);
     }
     if (selectedRelationScore != null) {
       productInfoLines.push(`關聯分數: ${selectedRelationScore}`);
@@ -1474,12 +1597,14 @@ app.post("/api/generate", async (req, res) => {
       productInfoLines.push(`提升度: ${selectedLift}`);
     }
     const productInfo = productInfoLines.join("\n");
-    const userLabel = userData?.intentLabel
-      ? `使用者意圖: ${userData.intentLabel}`
-      : "";
+    const userLabel = intentLabel ? `使用者意圖: ${intentLabel}` : "";
     const user = buildUserPersonaPrompt(userData);
 
-    const prompt = `你是一位電商line訊息文案撰寫員，要簡短文案。根據外部資訊(不用在乎縣市)，輸出最終文案，不要解釋、不要標題、不要角色說明。\n\n需求：針對使用者的猶豫點，語氣真誠、生活化，提到主商品與互補品。\n\n商品資訊：\n${productInfo}\n${userLabel}\n${user}\n外部資訊:\n${selectedContextText}`;
+    const discountInstruction = isPriceHesitation
+      ? "\n注意：文案中必須自然帶入折扣碼 GROUP18，說明輸入後可享這組互補品 9折優惠。"
+      : "";
+
+    const prompt = `你是一位電商line訊息文案撰寫員，要簡短文案。根據外部資訊(不用在乎縣市)，輸出最終文案，不要解釋、不要標題、不要角色說明。${discountInstruction}\n\n需求：針對使用者的猶豫點，語氣真誠、生活化，提到主商品與互補品。\n\n商品資訊：\n${productInfo}\n${userLabel}\n${user}\n外部資訊:\n${selectedContextText}`;
     let text = await generateGeminiCopy(prompt);
 
     return res.json({
